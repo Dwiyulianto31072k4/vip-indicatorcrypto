@@ -35,6 +35,18 @@ if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
 if 'total_forwarded' not in st.session_state:
     st.session_state.total_forwarded = 0
+    
+# Inisialisasi session state untuk kredensial
+if 'api_id' not in st.session_state:
+    st.session_state.api_id = None
+if 'api_hash' not in st.session_state:
+    st.session_state.api_hash = None
+if 'phone' not in st.session_state:
+    st.session_state.phone = None
+if 'source_id' not in st.session_state:
+    st.session_state.source_id = None
+if 'target_id' not in st.session_state:
+    st.session_state.target_id = None
 
 # Fungsi untuk menjalankan client Telethon
 async def run_client(api_id, api_hash, phone, source_id, target_id):
@@ -116,22 +128,22 @@ def stop_client_thread():
 
 # UI Streamlit
 st.title("Telegram Channel Forwarder")
-st.markdown("Aplikasi untuk meneruskan pesan dari channel CryptoBigStar ke channel tujuan Anda.")
+st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel tujuan Anda.")
 
 # Sidebar untuk konfigurasi
 with st.sidebar:
     st.header("Konfigurasi")
     
-    # Tampilkan API credentials dari secrets
+    # Tampilkan API credentials 
     st.subheader("Telegram API Credentials")
-    api_id = st.text_input("API ID", value=28690093)
-    api_hash = st.text_input("API Hash", value="aa512841e37c5ccb5a8ac494395bb373", type="password")
-    phone = st.text_input("Nomor Telepon", value="+6285161054271")
+    api_id = st.text_input("API ID", value="")
+    api_hash = st.text_input("API Hash", value="", type="password")
+    phone = st.text_input("Nomor Telepon", value="")
     
-    # Tampilkan channel IDs dari secrets
+    # Tampilkan channel IDs
     st.subheader("Channel Settings")
-    source_id = st.text_input("Source Channel ID", value=-1002051092635)
-    target_id = st.text_input("Target Channel ID", value=-4628225750)
+    source_id = st.text_input("Source Channel ID", value="")
+    target_id = st.text_input("Target Channel ID", value="")
     
     # Tombol start/stop
     col1, col2 = st.columns(2)
@@ -205,11 +217,11 @@ with st.expander("Cara Penggunaan"):
     ### Cara Menggunakan Aplikasi Ini:
     
     1. **Konfigurasi API**:
-       - API ID dan API Hash sudah dikonfigurasi otomatis
-       - Pastikan nomor telepon sudah benar
+       - Masukkan API ID dan API Hash dari Telegram
+       - Masukkan nomor telepon yang terdaftar di Telegram
     
     2. **Channel IDs**:
-       - Source Channel ID: ID channel sumber (CryptoBigStar)
+       - Source Channel ID: ID channel sumber
        - Target Channel ID: ID channel tujuan Anda
     
     3. **Menjalankan Bot**:
@@ -229,4 +241,4 @@ with st.expander("Cara Penggunaan"):
 # Auto-refresh halaman setiap 10 detik jika bot sedang berjalan
 if st.session_state.running:
     time.sleep(10)
-    st.experimental_rerun()
+    st.rerun()  # Gunakan st.rerun() bukan st.experimental_rerun()
