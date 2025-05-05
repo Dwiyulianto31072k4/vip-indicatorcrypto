@@ -9,14 +9,14 @@ import logging
 from telethon import TelegramClient, events
 import aiohttp
 
-# Konfigurasi halaman Streamlit
+# Streamlit page configuration
 st.set_page_config(
     page_title="Telegram Channel Forwarder",
     page_icon="📱",
     layout="wide"
 )
 
-# Konfigurasi logging
+# Logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -27,18 +27,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Kredeensial dan konfigurasi tetap
+# Credentials and fixed configuration
 API_ID = 28690093
 API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
 SOURCE_CHANNEL_ID = -1002626068320
 TARGET_CHANNEL_ID = -4628225750
 
-# File untuk menyimpan kode verifikasi
+# Files to store verification code
 VERIFICATION_CODE_FILE = "verification_code.txt"
 LOG_FILE = "bot_logs.txt"
 
-# Inisialisasi session state
+# Session state initialization
 if 'running' not in st.session_state:
     st.session_state['running'] = False
 if 'total_forwarded' not in st.session_state:
@@ -46,16 +46,16 @@ if 'total_forwarded' not in st.session_state:
 if 'log_messages' not in st.session_state:
     st.session_state['log_messages'] = []
 
-# Fungsi untuk menyimpan log ke file
+# Function to save log to file
 def write_log(message, is_error=False):
     try:
         with open(LOG_FILE, "a") as f:
             timestamp = datetime.now().strftime("%H:%M:%S")
             f.write(f"{timestamp} - {'ERROR' if is_error else 'INFO'} - {message}\n")
     except Exception as e:
-        logger.error(f"Gagal menulis log ke file: {str(e)}")
+        logger.error(f"Failed to write log to file: {str(e)}")
 
-# Fungsi untuk membaca log dari file
+# Function to read logs from file
 def read_logs():
     logs = []
     try:
@@ -71,63 +71,63 @@ def read_logs():
                             'error': level == 'ERROR'
                         })
     except Exception as e:
-        logger.error(f"Gagal membaca log dari file: {str(e)}")
+        logger.error(f"Failed to read logs from file: {str(e)}")
     return logs
 
-# Fungsi untuk mendapatkan kode verifikasi
+# Function to get verification code
 def code_callback():
-    logger.info("Menunggu kode verifikasi...")
-    # Hapus file kode verifikasi jika ada
+    logger.info("Waiting for verification code...")
+    # Remove verification code file if exists
     if os.path.exists(VERIFICATION_CODE_FILE):
         os.remove(VERIFICATION_CODE_FILE)
     
-    # Tulis pesan ke log
-    write_log("Bot membutuhkan kode verifikasi. Silakan masukkan kode verifikasi di Telegram.")
+    # Write message to log
+    write_log("Bot needs verification code. Please enter the verification code in Telegram.")
     
-    # Tunggu hingga kode verifikasi dimasukkan
+    # Wait until verification code is entered
     while not os.path.exists(VERIFICATION_CODE_FILE):
         time.sleep(1)
     
-    # Baca kode verifikasi
+    # Read verification code
     with open(VERIFICATION_CODE_FILE, "r") as f:
         code = f.read().strip()
     
-    # Hapus file setelah dibaca
+    # Remove file after reading
     os.remove(VERIFICATION_CODE_FILE)
     
-    write_log(f"Kode verifikasi diterima: {code}")
+    write_log(f"Verification code received: {code}")
     return code
 
-# Fungsi untuk menghitung persentase perubahan
+# Function to calculate percentage change
 def calculate_percentage_change(entry_price, target_price):
     try:
         entry = float(entry_price)
         target = float(target_price)
         
-        # Validasi untuk mencegah pembagian dengan nol atau nilai yang terlalu kecil
+        # Validation to prevent division by zero or too small values
         if entry < 0.0001:
-            logger.warning(f"Entry price terlalu kecil: {entry}, menggunakan default")
+            logger.warning(f"Entry price too small: {entry}, using default")
             return 0.0
             
         percentage = ((target - entry) / entry) * 100
         
-        # Batasi persentase maksimum ke nilai yang masuk akal
+        # Limit maximum percentage to reasonable values
         if abs(percentage) > 1000:
-            logger.warning(f"Persentase terlalu besar: {percentage}, dibatasi ke ±1000%")
+            logger.warning(f"Percentage too large: {percentage}, limited to ±1000%")
             percentage = 1000.0 if percentage > 0 else -1000.0
             
         return percentage
     except (ValueError, ZeroDivisionError):
-        logger.error(f"Error saat menghitung persentase: {entry_price}, {target_price}")
+        logger.error(f"Error calculating percentage: {entry_price}, {target_price}")
         return 0.0
 
-# Fungsi untuk mendapatkan harga cryptocurrency terkini
+# Function to get current cryptocurrency price
 async def get_current_price(coin_symbol):
     try:
-        # Hapus suffix USDT jika ada
+        # Remove USDT suffix if present
         base_symbol = coin_symbol.replace('USDT', '')
         
-        # Coba API Binance dulu
+        # Try Binance API first
         binance_url = f"https://api.binance.com/api/v3/ticker/price?symbol={coin_symbol}"
         async with aiohttp.ClientSession() as session:
             async with session.get(binance_url) as response:
@@ -136,7 +136,7 @@ async def get_current_price(coin_symbol):
                     if 'price' in data:
                         return float(data['price'])
                 
-        # Fallback ke CoinGecko
+        # Fallback to CoinGecko
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={base_symbol.lower()}&vs_currencies=usd"
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
@@ -147,35 +147,35 @@ async def get_current_price(coin_symbol):
                 
         return None
     except Exception as e:
-        logger.error(f"Error mendapatkan harga: {str(e)}")
+        logger.error(f"Error getting price: {str(e)}")
         return None
 
-# Fungsi untuk membuat tabel persentase perubahan
+# Function to create percentage change table
 def create_percentage_table(coin_name, entry_price, targets, stop_losses):
     try:
-        # Header tabel
-        table = "📝 Perhitungan Persentase Perubahan Harga\n\n"
-        table += "Level         Harga       % Perubahan dari Entry\n"
+        # Table header
+        table = "📝 Price Change Percentage Calculation\n\n"
+        table += "Level         Price       % Change from Entry\n"
         table += "------------------------------------------------\n"
         
-        # Tambahkan target
+        # Add targets
         for i, target in enumerate(targets, 1):
             percentage = calculate_percentage_change(entry_price, target)
             table += f"Target {i}      {target}      +{percentage:.2f}%\n"
         
-        # Tambahkan stop loss
+        # Add stop losses
         for i, sl in enumerate(stop_losses, 1):
             percentage = calculate_percentage_change(entry_price, sl)
-            # Gunakan nilai asli persentase (mungkin negatif)
+            # Use actual percentage value (may be negative)
             sign = "+" if percentage >= 0 else ""
             table += f"Stop Loss {i}    {sl}      {sign}{percentage:.2f}%\n"
         
         return table
     except Exception as e:
-        logger.error(f"Error saat membuat tabel persentase: {str(e)}")
-        return "Error saat membuat tabel persentase."
+        logger.error(f"Error creating percentage table: {str(e)}")
+        return "Error creating percentage table."
 
-# Fungsi untuk mendeteksi jenis pesan
+# Function to detect message type
 def detect_message_type(text):
     if re.search(r'Daily\s+Results|每日結算統計|Results', text, re.IGNORECASE):
         return "DAILY_RECAP"
@@ -186,28 +186,28 @@ def detect_message_type(text):
     else:
         return "NEW_SIGNAL"
 
-# Fungsi untuk mengekstrak data dari pesan
+# Function to extract data from message
 def extract_trading_data(message_text):
     try:
         lines = message_text.split('\n')
         
-        # Variabel untuk menyimpan data yang diekstrak
+        # Variables to store extracted data
         coin_name = None
         entry_price = None
         targets = []
         stop_losses = []
         
-        # Pattern untuk mengekstrak coin name (biasanya di baris awal)
-        for line in lines[:3]:  # Cek di 3 baris pertama
+        # Pattern to extract coin name (usually in first line)
+        for line in lines[:3]:  # Check first 3 lines
             line = line.strip()
             if not line:
                 continue
                 
-            # Coba berbagai pola untuk coin name
+            # Try various patterns for coin name
             coin_patterns = [
-                r'^([A-Za-z0-9]+)[^A-Za-z0-9]',  # Coin di awal baris
-                r'([A-Za-z0-9]+USDT)',  # Format seperti BTCUSDT
-                r'([A-Za-z0-9]+) NEW'   # Format seperti "COIN NEW"
+                r'^([A-Za-z0-9]+)[^A-Za-z0-9]',  # Coin at start of line
+                r'([A-Za-z0-9]+USDT)',  # Format like BTCUSDT
+                r'([A-Za-z0-9]+) NEW'   # Format like "COIN NEW"
             ]
             
             for pattern in coin_patterns:
@@ -219,42 +219,42 @@ def extract_trading_data(message_text):
             if coin_name:
                 break
         
-        # Iterasi per baris untuk ekstrak data
+        # Iterate per line to extract data
         for line in lines:
             line = line.strip()
             
-            # Ekstrak entry price
+            # Extract entry price
             entry_match = re.search(r'Entry:?\s*([0-9.]+)', line)
             if entry_match:
                 entry_price = entry_match.group(1)
             
-            # Ekstrak target prices
+            # Extract target prices
             target_match = re.search(r'Target\s+(\d+):?\s*([0-9.]+)', line)
             if target_match:
                 target_num = int(target_match.group(1))
                 target_price = target_match.group(2)
                 
-                # Pastikan list cukup panjang
+                # Make sure list is long enough
                 while len(targets) < target_num:
                     targets.append(None)
                 
-                # Simpan target di posisi yang benar (indeks dimulai dari 0)
+                # Save target at correct position (index starts at 0)
                 targets[target_num-1] = target_price
             
-            # Ekstrak stop loss
+            # Extract stop loss
             sl_match = re.search(r'Stop\s+loss\s+(\d+):?\s*([0-9.]+)', line, re.IGNORECASE)
             if sl_match:
                 sl_num = int(sl_match.group(1))
                 sl_price = sl_match.group(2)
                 
-                # Pastikan list cukup panjang
+                # Make sure list is long enough
                 while len(stop_losses) < sl_num:
                     stop_losses.append(None)
                 
-                # Simpan stop loss di posisi yang benar
+                # Save stop loss at correct position
                 stop_losses[sl_num-1] = sl_price
         
-        # Hapus nilai None dari lists
+        # Remove None values from lists
         targets = [t for t in targets if t is not None]
         stop_losses = [sl for sl in stop_losses if sl is not None]
         
@@ -265,7 +265,7 @@ def extract_trading_data(message_text):
             'stop_losses': stop_losses
         }
     except Exception as e:
-        logger.error(f"Error saat ekstrak data trading: {str(e)}")
+        logger.error(f"Error extracting trading data: {str(e)}")
         return {
             'coin_name': None,
             'entry_price': None,
@@ -273,23 +273,23 @@ def extract_trading_data(message_text):
             'stop_losses': []
         }
 
-# Fungsi untuk mengekstrak data dari target hit/stop loss message
+# Function to extract data from target hit/stop loss message
 def extract_hit_data(message_text):
     data = {'coin': None, 'level': None, 'price': None}
     
-    # Cari nama coin
+    # Find coin name
     coin_match = re.search(r'([A-Za-z0-9]+)(USDT|BTC|ETH|BNB)', message_text)
     if coin_match:
         data['coin'] = coin_match.group(0)
     
-    # Cari level dan harga target
+    # Find target level and price
     if "target" in message_text.lower():
         target_match = re.search(r'Target\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
         if target_match:
             data['level'] = f"Target {target_match.group(1)}"
             data['price'] = target_match.group(2)
     
-    # Cari level dan harga stop loss
+    # Find stop loss level and price
     elif "stop loss" in message_text.lower():
         sl_match = re.search(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
         if sl_match:
@@ -298,7 +298,7 @@ def extract_hit_data(message_text):
     
     return data
 
-# Fungsi untuk mengekstrak data dari daily recap
+# Function to extract data from daily recap
 def extract_daily_recap_data(text):
     data = {
         'date': None,
@@ -310,29 +310,29 @@ def extract_daily_recap_data(text):
         'hitted_stop_losses': 0
     }
     
-    # Ekstrak tanggal
+    # Extract date
     date_match = re.search(r'(\d{2}/\d{2}-\d{2}/\d{2})', text)
     if date_match:
         data['date'] = date_match.group(1)
     
-    # Ekstrak target yang tercapai
+    # Extract targets hit
     for i in range(1, 5):  # Target 1-4
         target_match = re.search(rf'Hitted\s+target\s+{i}:\s*(.*?)(?:\n|$)', text)
         if target_match:
             coins = [coin.strip() for coin in target_match.group(1).split(',')]
             data['hitted_targets'].append({'level': i, 'coins': coins})
     
-    # Ekstrak running signals
+    # Extract running signals
     running_match = re.search(r'Running:\s*(.*?)(?:\n|$)', text)
     if running_match:
         data['running'] = [coin.strip() for coin in running_match.group(1).split(',')]
     
-    # Ekstrak stop loss
+    # Extract stop loss
     sl_match = re.search(r'Hitted\s+stop\s+loss:\s*(.*?)(?:\n|$)', text)
     if sl_match:
         data['stop_losses'] = [coin.strip() for coin in sl_match.group(1).split(',')]
     
-    # Ekstrak statistik
+    # Extract statistics
     total_match = re.search(r'Total\s+Signals:\s*(\d+)', text)
     if total_match:
         data['total_signals'] = int(total_match.group(1))
@@ -347,7 +347,7 @@ def extract_daily_recap_data(text):
     
     return data
 
-# Fungsi untuk membuat tabel win rate
+# Function to create win rate table
 def create_win_rate_table(recap_data):
     total_signals = recap_data['total_signals']
     take_profits = recap_data['hitted_take_profits']
@@ -358,8 +358,8 @@ def create_win_rate_table(recap_data):
     else:
         win_rate = (take_profits / total_signals) * 100
     
-    table = "📊 Analisis Performa Trading 📊\n\n"
-    table += "Metrik                  Nilai       Persentase\n"
+    table = "📊 Trading Performance Analysis 📊\n\n"
+    table += "Metric                  Value       Percentage\n"
     table += "--------------------------------------------\n"
     table += f"Win Rate               {take_profits}/{total_signals}     {win_rate:.2f}%\n"
     
@@ -367,201 +367,203 @@ def create_win_rate_table(recap_data):
         profit_ratio = (take_profits / (take_profits + stop_losses)) * 100
         table += f"Profit/Loss Ratio      {take_profits}/{stop_losses}     {profit_ratio:.2f}%\n"
     
-    table += f"Sinyal Running         {len(recap_data['running'])}         {(len(recap_data['running'])/total_signals*100):.2f}%\n"
+    table += f"Running Signals        {len(recap_data['running'])}         {(len(recap_data['running'])/total_signals*100):.2f}%\n"
     
     return table
 
-# Fungsi untuk menjalankan client Telethon
+# Function to run Telethon client
 async def run_client():
     try:
-        # Buat client
+        # Create client
         client = TelegramClient('telegram_forwarder_session', API_ID, API_HASH)
         
-        # Event handler untuk pesan baru
+        # Event handler for new messages
         @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
         async def handler(event):
             try:
                 message = event.message
                 
-                # Jika tidak ada pesan, hanya kirim media
+                # If no text, just send media
                 if not message.text:
                     if message.media:
                         await client.send_file(
                             TARGET_CHANNEL_ID, 
                             message.media,
-                            caption=f"🚀 VIP SIGNAL 🚀\n\n💹 @liananalyst"
+                            caption=f"🚀 VIP SIGNAL 🚀\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                         )
                     return
                 
-                # Deteksi jenis pesan
+                # Detect message type
                 message_type = detect_message_type(message.text)
                 
                 if message_type == "DAILY_RECAP":
-                    # Proses daily recap
+                    # Process daily recap
                     recap_data = extract_daily_recap_data(message.text)
                     
-                    # Buat teks dengan win rate
-                    custom_text = f"📅 DAILY RECAP: {recap_data['date'] if recap_data['date'] else 'Hari Ini'} 📅\n\n"
+                    # Create text with win rate
+                    custom_text = f"📅 DAILY RECAP: {recap_data['date'] if recap_data['date'] else 'Today'} 📅\n\n"
                     custom_text += message.text + "\n\n"
                     custom_text += create_win_rate_table(recap_data)
-                    custom_text += "\n\n💹 @liananalyst"
+                    custom_text += "\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                     
-                    # Kirim pesan
+                    # Send message
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
                 elif message_type == "TARGET_HIT":
-                    # Format khusus untuk target tercapai
+                    # Special format for target hit
                     hit_data = extract_hit_data(message.text)
                     
                     if hit_data['coin'] and hit_data['level'] and hit_data['price']:
-                        custom_text = f"✅ TARGET TERCAPAI: {hit_data['coin']} ✅\n\n"
-                        custom_text += f"🎯 {hit_data['level']} ({hit_data['price']}) TERCAPAI!\n\n"
+                        # Use "SIGNAL UPDATE" format for target hit
+                        custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
+                        custom_text += f"🎯 {hit_data['level']} ({hit_data['price']}) HIT!\n\n"
                     else:
-                        # Jika ekstraksi gagal, kirim pesan asli dengan header standar
-                        custom_text = f"✅ TARGET TERCAPAI ✅\n\n"
+                        # If extraction fails, send original message with standard header
+                        custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
                         custom_text += message.text + "\n\n"
                     
-                    custom_text += "💹 @liananalyst"
+                    custom_text += "https://t.me/+4xrX56bvDhRkODA1"
                     
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
                 elif message_type == "STOP_LOSS_HIT":
-                    # Format khusus untuk stop loss terkena
+                    # Special format for stop loss hit
                     hit_data = extract_hit_data(message.text)
                     
                     if hit_data['coin'] and hit_data['level'] and hit_data['price']:
-                        custom_text = f"🔴 STOP LOSS TERKENA: {hit_data['coin']} 🔴\n\n"
-                        custom_text += f"⚠️ {hit_data['level']} ({hit_data['price']}) TERKENA!\n\n"
+                        # Use "SIGNAL UPDATE" format for stop loss hit
+                        custom_text = f"🔴 SIGNAL UPDATE: {hit_data['coin']} 🔴\n\n"
+                        custom_text += f"⚠️ {hit_data['level']} ({hit_data['price']}) TRIGGERED!\n\n"
                     else:
-                        # Jika ekstraksi gagal, kirim pesan asli dengan header standar
-                        custom_text = f"🔴 STOP LOSS TERKENA 🔴\n\n"
+                        # If extraction fails, send original message with standard header
+                        custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
                         custom_text += message.text + "\n\n"
                     
-                    custom_text += "💹 @liananalyst"
+                    custom_text += "https://t.me/+4xrX56bvDhRkODA1"
                     
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
                 else:  # NEW_SIGNAL
-                    # Ekstrak data trading
+                    # Extract trading data
                     trading_data = extract_trading_data(message.text)
                     coin_name = trading_data['coin_name']
                     entry_price = trading_data['entry_price']
                     targets = trading_data['targets']
                     stop_losses = trading_data['stop_losses']
                     
-                    # Jika tidak ada entry price tapi ada coin name, coba dapatkan harga terkini
+                    # If no entry price but have coin name, try to get current price
                     if coin_name and not entry_price and (targets or stop_losses):
                         current_price = await get_current_price(coin_name)
                         if current_price:
                             entry_price = str(current_price)
-                            logger.info(f"Menggunakan harga terkini untuk {coin_name}: {entry_price}")
+                            logger.info(f"Using current price for {coin_name}: {entry_price}")
                     
-                    # Buat pesan kustom
+                    # Create custom message
                     if coin_name and entry_price and (targets or stop_losses):
-                        # Header pesan
+                        # Header
                         custom_text = f"🚀 VIP SIGNAL: {coin_name} 🚀\n\n"
                         
-                        # Tambahkan pesan asli
+                        # Add original message
                         custom_text += message.text + "\n\n"
                         
-                        # Tambahkan tabel persentase jika data cukup
+                        # Add percentage table if data is sufficient
                         if targets or stop_losses:
                             custom_text += create_percentage_table(coin_name, entry_price, targets, stop_losses)
                         
                         # Footer
-                        custom_text += "\n\n💹 @liananalyst"
+                        custom_text += "\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                     else:
-                        # Format default jika data tidak lengkap
-                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}\n\n💹 @liananalyst"
+                        # Default format if data is incomplete
+                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                     
-                    # Kirim pesan ke channel tujuan
+                    # Send message to target channel
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                 
-                # Log info pesan
-                message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media atau pesan tanpa teks"
-                log_msg = f"Pesan berhasil dikirim ulang: {message_preview}"
+                # Log message info
+                message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media or message without text"
+                log_msg = f"Message successfully forwarded: {message_preview}"
                 logger.info(log_msg)
                 write_log(log_msg)
                     
             except Exception as e:
-                error_msg = f"Error saat mengirim pesan: {str(e)}"
+                error_msg = f"Error sending message: {str(e)}"
                 logger.error(error_msg)
                 write_log(error_msg, True)
         
-        # Jalankan client
-        write_log("Memulai client Telegram...")
+        # Run client
+        write_log("Starting Telegram client...")
         await client.start(PHONE_NUMBER, code_callback=code_callback)
         
-        log_msg = f"Bot berhasil diaktifkan. Memantau channel: {SOURCE_CHANNEL_ID}"
+        log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
         logger.info(log_msg)
         write_log(log_msg)
         
-        # Jalankan hingga dihentikan
+        # Run until disconnected
         await client.run_until_disconnected()
         
     except Exception as e:
-        error_msg = f"Error saat menjalankan client: {str(e)}"
+        error_msg = f"Error running client: {str(e)}"
         logger.error(error_msg)
         write_log(error_msg, True)
 
-# Fungsi untuk menjalankan client dalam thread terpisah
+# Function to run client in separate thread
 def start_client_thread():
     try:
-        write_log("Memulai client dalam thread terpisah...")
+        write_log("Starting client in separate thread...")
         asyncio.set_event_loop(asyncio.new_event_loop())
         loop = asyncio.get_event_loop()
         loop.run_until_complete(run_client())
     except Exception as e:
-        error_msg = f"Error dalam thread: {str(e)}"
+        error_msg = f"Error in thread: {str(e)}"
         logger.error(error_msg)
         write_log(error_msg, True)
 
-# Fungsi untuk menyimpan kode verifikasi
+# Function to save verification code
 def save_verification_code():
     if st.session_state.code_input:
         try:
             with open(VERIFICATION_CODE_FILE, "w") as f:
                 f.write(st.session_state.code_input)
-            st.success("Kode verifikasi dikirim!")
+            st.success("Verification code sent!")
         except Exception as e:
-            st.error(f"Gagal menyimpan kode verifikasi: {str(e)}")
+            st.error(f"Failed to save verification code: {str(e)}")
 
-# UI Streamlit
+# Streamlit UI
 st.title("Telegram Channel Forwarder")
-st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel tujuan Anda.")
+st.markdown("Application to forward messages from source channel to your target channel.")
 
-# Kolom untuk kode verifikasi
+# Column for verification code
 if st.session_state['running']:
-    st.text_input("Masukkan Kode Verifikasi dari Telegram (jika diminta):", 
+    st.text_input("Enter Verification Code from Telegram (if requested):", 
                   key="code_input", 
                   on_change=save_verification_code)
 
-# Tampilkan status dan statistik
-st.subheader("Status & Statistik")
+# Display status and statistics
+st.subheader("Status & Statistics")
 col1, col2 = st.columns(2)
 with col1:
     status = "🟢 **Running**" if st.session_state['running'] else "🔴 **Stopped**"
     st.markdown(f"**Bot Status:** {status}")
 with col2:
-    # Update total forwarded dari log
+    # Update total forwarded from log
     forwarded_count = 0
     for log in read_logs():
-        if "Pesan berhasil dikirim ulang" in log['message']:
+        if "Message successfully forwarded" in log['message']:
             forwarded_count += 1
     st.session_state['total_forwarded'] = forwarded_count
-    st.markdown(f"**Total Pesan Dikirim:** {st.session_state['total_forwarded']}")
+    st.markdown(f"**Total Messages Sent:** {st.session_state['total_forwarded']}")
 
-# Tombol start/stop
+# Start/stop buttons
 col1, col2 = st.columns(2)
 with col1:
     if not st.session_state['running']:
         if st.button("Start Forwarding", use_container_width=True):
-            # Buat file log jika belum ada
+            # Create log file if it doesn't exist
             if not os.path.exists(LOG_FILE):
                 with open(LOG_FILE, "w") as f:
                     f.write("")
             
-            # Jalankan client di thread terpisah
+            # Run client in separate thread
             thread = threading.Thread(target=start_client_thread, daemon=True)
             thread.start()
             
@@ -571,19 +573,19 @@ with col1:
 with col2:
     if st.session_state['running']:
         if st.button("Stop Forwarding", use_container_width=True):
-            # Hentikan client - tidak ada cara langsung untuk menghentikan thread
-            # Hanya tandai sebagai tidak berjalan
+            # Stop client - no direct way to stop thread
+            # Just mark as not running
             st.session_state['running'] = False
             write_log("Bot stopped!")
             st.rerun()
 
-# Tampilkan log aktivitas
-st.subheader("Log Aktivitas")
+# Display activity log
+st.subheader("Activity Log")
 log_container = st.container()
 with log_container:
-    # Baca log dari file
+    # Read logs from file
     logs = read_logs()
-    # Tampilkan 10 log terakhir
+    # Display last 10 logs
     if logs:
         for log in reversed(logs[-10:]):
             timestamp = log.get('time', '')
@@ -595,35 +597,35 @@ with log_container:
             else:
                 st.info(f"{timestamp} - {message}")
 
-# Tambahkan cara penggunaan
-with st.expander("Cara Penggunaan"):
+# Add usage instructions
+with st.expander("How to Use"):
     st.markdown("""
-    ### Cara Menggunakan Aplikasi Ini:
+    ### How to Use This Application:
     
-    1. **Menjalankan Bot**:
-       - Klik "Start Forwarding" untuk memulai
-       - Pertama kali, Anda mungkin diminta memasukkan kode verifikasi
-       - Klik "Stop Forwarding" untuk menghentikan bot
+    1. **Running the Bot**:
+       - Click "Start Forwarding" to begin
+       - First time, you may be asked to enter a verification code
+       - Click "Stop Forwarding" to stop the bot
     
-    2. **Kode Verifikasi**:
-       - Saat pertama kali dijalankan, Telegram akan mengirimkan kode verifikasi ke nomor telepon Anda
-       - Masukkan kode tersebut pada kolom "Kode Verifikasi" yang muncul
+    2. **Verification Code**:
+       - When first run, Telegram will send a verification code to your phone number
+       - Enter that code in the "Verification Code" field that appears
     
-    3. **Melihat Log**:
-       - Lihat bagian "Log Aktivitas" untuk memantau proses pengiriman pesan
-       - Log juga disimpan di file `telegram_forwarder.log`
+    3. **View Logs**:
+       - Check the "Activity Log" section to monitor message forwarding process
+       - Logs are also saved in the `telegram_forwarder.log` file
     
-    4. **Format Pesan**:
-       - Pesan trading baru: Ditambahkan perhitungan persentase perubahan
-       - Target tercapai: Format dengan sorotan aset
-       - Stop loss: Format dengan sorotan aset
-       - Daily recap: Ditambahkan perhitungan win rate dan statistik
+    4. **Message Formats**:
+       - New trading signals: "VIP SIGNAL" with price percentage change calculation
+       - Target hit updates: "SIGNAL UPDATE" with simple format
+       - Stop loss triggered updates: "SIGNAL UPDATE" with simple format
+       - Daily recaps: Added win rate calculation and statistics
     
     5. **Troubleshooting**:
-       - Jika error, restart aplikasi
-       - Pastikan akun Anda memiliki akses ke kedua channel
+       - If error occurs, restart the application
+       - Make sure your account has access to both channels
     """)
 
-# Auto-refresh halaman setiap 5 detik
+# Auto-refresh page every 5 seconds
 time.sleep(5)
 st.rerun()
