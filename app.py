@@ -175,16 +175,36 @@ def create_percentage_table(coin_name, entry_price, targets, stop_losses):
         logger.error(f"Error creating percentage table: {str(e)}")
         return "Error creating percentage table."
 
-# Function to detect message type
+# IMPROVED: Function to detect message type with better pattern matching
 def detect_message_type(text):
+    # Check for Daily Recap
     if re.search(r'Daily\s+Results|每日結算統計|Results', text, re.IGNORECASE):
         return "DAILY_RECAP"
-    elif re.search(r'Hitted\s+target|Reached\s+target|Target\s+[\d+]\s*[✅🟢]', text, re.IGNORECASE):
+    
+    # Check for Target Hit - IMPROVED to catch more patterns including checkmarks
+    if (re.search(r'Hitted\s+target|Reached\s+target', text, re.IGNORECASE) or 
+        re.search(r'Target\s+\d+.*?[✅🟢]', text, re.IGNORECASE) or
+        re.search(r'Target\s+\d+\s*[:]\s*\d+.*?[✅🟢]', text, re.IGNORECASE)):
         return "TARGET_HIT"
-    elif re.search(r'Hitted\s+stop\s+loss|Stop\s+loss\s+triggered|Stop\s+loss\s+[\d+]\s*[🛑🔴]', text, re.IGNORECASE):
+    
+    # Check for Stop Loss Hit - IMPROVED to catch more patterns
+    if (re.search(r'Hitted\s+stop\s+loss|Stop\s+loss\s+triggered', text, re.IGNORECASE) or
+        re.search(r'Stop\s+loss\s+\d+.*?[🛑🔴]', text, re.IGNORECASE) or
+        re.search(r'Stop\s+loss\s+\d+\s*[:]\s*\d+.*?[🛑🔴]', text, re.IGNORECASE)):
         return "STOP_LOSS_HIT"
-    else:
-        return "NEW_SIGNAL"
+    
+    # Check if it's a very short message with just coin name and target/price
+    # This is a specific case for short messages like in your example
+    if len(text.strip().split('\n')) <= 2 and ('USDT' in text or 'BTC' in text):
+        # If very short message contains a checkmark, it's likely a target hit
+        if '✅' in text or '🟢' in text:
+            return "TARGET_HIT"
+        # If very short message contains a stop symbol, it's likely a stop loss
+        elif '🛑' in text or '🔴' in text:
+            return "STOP_LOSS_HIT"
+    
+    # If no specific type is detected, assume it's a new signal
+    return "NEW_SIGNAL"
 
 # Function to extract data from message
 def extract_trading_data(message_text):
@@ -283,18 +303,30 @@ def extract_hit_data(message_text):
         data['coin'] = coin_match.group(0)
     
     # Find target level and price
+    target_match = None
     if "target" in message_text.lower():
         target_match = re.search(r'Target\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
-        if target_match:
-            data['level'] = f"Target {target_match.group(1)}"
-            data['price'] = target_match.group(2)
+    
+    # If specific format from example images
+    if not target_match and '✅' in message_text:
+        target_match = re.search(r'Target\s+(\d+):\s*([0-9.]+)\s*[✅]', message_text, re.IGNORECASE)
+    
+    if target_match:
+        data['level'] = f"Target {target_match.group(1)}"
+        data['price'] = target_match.group(2)
     
     # Find stop loss level and price
-    elif "stop loss" in message_text.lower():
+    sl_match = None
+    if "stop loss" in message_text.lower():
         sl_match = re.search(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
-        if sl_match:
-            data['level'] = f"Stop Loss {sl_match.group(1)}"
-            data['price'] = sl_match.group(2)
+    
+    # If specific format with red mark
+    if not sl_match and ('🛑' in message_text or '🔴' in message_text):
+        sl_match = re.search(r'Stop\s+loss\s+(\d+):\s*([0-9.]+)\s*[🛑🔴]', message_text, re.IGNORECASE)
+    
+    if sl_match:
+        data['level'] = f"Stop Loss {sl_match.group(1)}"
+        data['price'] = sl_match.group(2)
     
     return data
 
@@ -393,8 +425,12 @@ async def run_client():
                         )
                     return
                 
+                # Log incoming message for debugging
+                logger.info(f"Received message: {message.text[:100]}...")
+                
                 # Detect message type
                 message_type = detect_message_type(message.text)
+                logger.info(f"Detected message type: {message_type}")
                 
                 if message_type == "DAILY_RECAP":
                     # Process daily recap
