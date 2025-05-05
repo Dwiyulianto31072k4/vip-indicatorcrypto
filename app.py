@@ -44,6 +44,8 @@ if 'total_forwarded' not in st.session_state:
     st.session_state['total_forwarded'] = 0
 if 'log_messages' not in st.session_state:
     st.session_state['log_messages'] = []
+if 'forward_mode' not in st.session_state:
+    st.session_state['forward_mode'] = "Kirim Ulang"
 
 # Fungsi untuk menyimpan log ke file
 def write_log(message, is_error=False):
@@ -107,22 +109,38 @@ async def run_client():
         @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
         async def handler(event):
             try:
-                # Forward pesan ke channel tujuan
-                await client(ForwardMessagesRequest(
-                    from_peer=SOURCE_CHANNEL_ID,
-                    id=[event.message.id],
-                    to_peer=TARGET_CHANNEL_ID,
-                    with_my_score=True,
-                ))
+                message = event.message
+                
+                if st.session_state['forward_mode'] == "Forward Asli":
+                    # Forward pesan ke channel tujuan (tetap menampilkan "Forwarded from...")
+                    await client(ForwardMessagesRequest(
+                        from_peer=SOURCE_CHANNEL_ID,
+                        id=[message.id],
+                        to_peer=TARGET_CHANNEL_ID,
+                        with_my_score=True,
+                    ))
+                    log_action = "diforward"
+                else:
+                    # Kirim ulang pesan dengan format kustom "Sent By Lian Analyst"
+                    if message.text:
+                        custom_text = f"Sent By Lian Analyst\n\n{message.text}"
+                        await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                    elif message.media:
+                        await client.send_file(
+                            TARGET_CHANNEL_ID, 
+                            message.media,
+                            caption="Sent By Lian Analyst" + (f"\n\n{message.text}" if message.text else "")
+                        )
+                    log_action = "dikirim ulang"
                 
                 # Log info pesan
-                message_preview = event.message.text[:50] + "..." if event.message.text and len(event.message.text) > 50 else "Media atau pesan tanpa teks"
-                log_msg = f"Pesan berhasil diforward: {message_preview}"
+                message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media atau pesan tanpa teks"
+                log_msg = f"Pesan berhasil {log_action}: {message_preview}"
                 logger.info(log_msg)
                 write_log(log_msg)
                 
             except Exception as e:
-                error_msg = f"Error saat forward pesan: {str(e)}"
+                error_msg = f"Error saat mengirim pesan: {str(e)}"
                 logger.error(error_msg)
                 write_log(error_msg, True)
         
@@ -168,6 +186,16 @@ def save_verification_code():
 st.title("Telegram Channel Forwarder")
 st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel tujuan Anda.")
 
+# Sidebar untuk pengaturan
+st.sidebar.title("Pengaturan")
+forward_mode = st.sidebar.radio(
+    "Mode Pengiriman:",
+    ["Forward Asli", "Kirim Ulang"],
+    index=1,  # Default ke "Kirim Ulang"
+    help="Forward Asli akan menampilkan 'Forwarded from...', Kirim Ulang akan menampilkan 'Sent By Lian Analyst'"
+)
+st.session_state['forward_mode'] = forward_mode
+
 # Kolom untuk kode verifikasi
 if st.session_state['running']:
     st.text_input("Masukkan Kode Verifikasi dari Telegram (jika diminta):", 
@@ -176,7 +204,7 @@ if st.session_state['running']:
 
 # Tampilkan status dan statistik
 st.subheader("Status & Statistik")
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
     status = "🟢 **Running**" if st.session_state['running'] else "🔴 **Stopped**"
     st.markdown(f"**Bot Status:** {status}")
@@ -184,10 +212,12 @@ with col2:
     # Update total forwarded dari log
     forwarded_count = 0
     for log in read_logs():
-        if "Pesan berhasil diforward" in log['message']:
+        if "Pesan berhasil diforward" in log['message'] or "Pesan berhasil dikirim ulang" in log['message']:
             forwarded_count += 1
     st.session_state['total_forwarded'] = forwarded_count
     st.markdown(f"**Total Pesan Diteruskan:** {st.session_state['total_forwarded']}")
+with col3:
+    st.markdown(f"**Mode Pengiriman:** {st.session_state['forward_mode']}")
 
 # Tombol start/stop
 col1, col2 = st.columns(2)
@@ -205,7 +235,7 @@ with col1:
             
             st.session_state['running'] = True
             write_log("Bot starting...")
-            st.experimental_rerun()
+            st.rerun()
 with col2:
     if st.session_state['running']:
         if st.button("Stop Forwarding", use_container_width=True):
@@ -213,7 +243,7 @@ with col2:
             # Hanya tandai sebagai tidak berjalan
             st.session_state['running'] = False
             write_log("Bot stopped!")
-            st.experimental_rerun()
+            st.rerun()
 
 # Tampilkan log aktivitas
 st.subheader("Log Aktivitas")
@@ -238,20 +268,25 @@ with st.expander("Cara Penggunaan"):
     st.markdown("""
     ### Cara Menggunakan Aplikasi Ini:
     
-    1. **Menjalankan Bot**:
+    1. **Pengaturan**:
+       - Di sidebar, pilih mode pengiriman (Forward Asli atau Kirim Ulang)
+       - Forward Asli: Menampilkan "Forwarded from..."
+       - Kirim Ulang: Menampilkan "Sent By Lian Analyst"
+    
+    2. **Menjalankan Bot**:
        - Klik "Start Forwarding" untuk memulai
        - Pertama kali, Anda mungkin diminta memasukkan kode verifikasi
        - Klik "Stop Forwarding" untuk menghentikan bot
     
-    2. **Kode Verifikasi**:
+    3. **Kode Verifikasi**:
        - Saat pertama kali dijalankan, Telegram akan mengirimkan kode verifikasi ke nomor telepon Anda
        - Masukkan kode tersebut pada kolom "Kode Verifikasi" yang muncul
     
-    3. **Melihat Log**:
+    4. **Melihat Log**:
        - Lihat bagian "Log Aktivitas" untuk memantau proses forwarding
        - Log juga disimpan di file `telegram_forwarder.log`
     
-    4. **Troubleshooting**:
+    5. **Troubleshooting**:
        - Jika error, restart aplikasi
        - Pastikan akun Anda memiliki akses ke kedua channel
     """)
