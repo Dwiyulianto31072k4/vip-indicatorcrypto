@@ -43,6 +43,16 @@ LOG_FILE = "bot_logs.txt"
 # Set restart interval (in seconds)
 RESTART_INTERVAL = 12 * 60 * 60  # 12 hours
 
+# Session state initialization - MUST be done first
+if 'running' not in st.session_state:
+    st.session_state['running'] = False
+if 'total_forwarded' not in st.session_state:
+    st.session_state['total_forwarded'] = 0
+if 'log_messages' not in st.session_state:
+    st.session_state['log_messages'] = []
+if 'restart_required' not in st.session_state:
+    st.session_state['restart_required'] = False
+
 # Thread-safe Bot State class
 class BotState:
     def __init__(self):
@@ -88,25 +98,6 @@ class BotState:
 # Create global instance
 bot_state = BotState()
 
-# Initialize session state
-def initialize_session_state():
-    if 'running' not in st.session_state:
-        st.session_state['running'] = False
-    if 'total_forwarded' not in st.session_state:
-        st.session_state['total_forwarded'] = 0
-    if 'log_messages' not in st.session_state:
-        st.session_state['log_messages'] = []
-    if 'restart_required' not in st.session_state:
-        st.session_state['restart_required'] = False
-    
-    # Sync bot_state with session_state if needed
-    bot_state.running = st.session_state['running']
-    bot_state.restart_required = st.session_state['restart_required']
-    bot_state.total_forwarded = st.session_state['total_forwarded']
-
-# Call this at the start
-initialize_session_state()
-
 # Function to save log to file
 def write_log(message, is_error=False):
     try:
@@ -134,6 +125,11 @@ def read_logs():
     except Exception as e:
         logger.error(f"Failed to read logs from file: {str(e)}")
     return logs
+
+# Initialize bot state with session state values
+bot_state.running = st.session_state['running']
+bot_state.restart_required = st.session_state['restart_required']
+bot_state.total_forwarded = st.session_state['total_forwarded']
 
 # Function to get verification code
 def code_callback():
@@ -469,7 +465,9 @@ def create_win_rate_table(recap_data):
         profit_ratio = (take_profits / (take_profits + stop_losses)) * 100
         table += f"Profit/Loss Ratio      {take_profits}/{stop_losses}     {profit_ratio:.2f}%\n"
     
-    table += f"Running Signals        {len(recap_data['running'])}         {(len(recap_data['running'])/total_signals*100):.2f}%\n"
+    if total_signals > 0:
+        running_pct = (len(recap_data['running'])/total_signals*100) if len(recap_data['running']) > 0 else 0
+        table += f"Running Signals        {len(recap_data['running'])}         {running_pct:.2f}%\n"
     
     return table
 
