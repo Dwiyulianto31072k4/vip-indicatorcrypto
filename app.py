@@ -43,7 +43,7 @@ LOG_FILE = "bot_logs.txt"
 # Set restart interval (in seconds)
 RESTART_INTERVAL = 12 * 60 * 60  # 12 hours
 
-# IMPORTANT: Initialize all session state variables at the beginning
+# Session state initialization
 if 'running' not in st.session_state:
     st.session_state['running'] = False
 if 'total_forwarded' not in st.session_state:
@@ -52,47 +52,23 @@ if 'log_messages' not in st.session_state:
     st.session_state['log_messages'] = []
 if 'restart_required' not in st.session_state:
     st.session_state['restart_required'] = False
-if 'code_input' not in st.session_state:
-    st.session_state['code_input'] = ""
-if 'client_thread' not in st.session_state:
-    st.session_state['client_thread'] = None
 
 # Function to save log to file
 def write_log(message, is_error=False):
     try:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"{timestamp} - {'ERROR' if is_error else 'INFO'} - {message}\n"
-        
         with open(LOG_FILE, "a") as f:
-            f.write(log_entry)
-            
-        # Update session state log messages for UI display
-        try:
-            logs = st.session_state.get('log_messages', [])
-            logs.append({
-                'time': timestamp,
-                'message': message,
-                'error': is_error
-            })
-            # Keep only last 100 logs in memory
-            if len(logs) > 100:
-                logs = logs[-100:]
-            st.session_state['log_messages'] = logs
-        except Exception as e:
-            logger.error(f"Failed to update session log messages: {str(e)}")
-            
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            f.write(f"{timestamp} - {'ERROR' if is_error else 'INFO'} - {message}\n")
     except Exception as e:
         logger.error(f"Failed to write log to file: {str(e)}")
 
 # Function to read logs from file
-def read_logs(max_logs=50):
+def read_logs():
     logs = []
     try:
         if os.path.exists(LOG_FILE):
             with open(LOG_FILE, "r") as f:
-                lines = f.readlines()
-                # Get last 'max_logs' lines
-                for line in lines[-max_logs:]:
+                for line in f.readlines():
                     parts = line.strip().split(" - ", 2)
                     if len(parts) == 3:
                         timestamp, level, message = parts
@@ -168,27 +144,9 @@ def calculate_percentage_change(entry_price, target_price):
         logger.error(f"Error calculating percentage: {entry_price}, {target_price}")
         return 0.0
 
-# Function to get current cryptocurrency price with caching and rate limiting
-price_cache = {}
-last_api_call = 0
-API_CALL_COOLDOWN = 5  # seconds
-
+# Function to get current cryptocurrency price
 async def get_current_price(coin_symbol):
-    global last_api_call
-    
     try:
-        # Check cache first
-        current_time = time.time()
-        if coin_symbol in price_cache:
-            cache_time, cached_price = price_cache[coin_symbol]
-            # Cache valid for 5 minutes
-            if current_time - cache_time < 300:
-                return cached_price
-        
-        # Rate limit API calls
-        if current_time - last_api_call < API_CALL_COOLDOWN:
-            await asyncio.sleep(API_CALL_COOLDOWN - (current_time - last_api_call))
-        
         # Remove USDT suffix if present
         base_symbol = coin_symbol.replace('USDT', '')
         
@@ -199,25 +157,16 @@ async def get_current_price(coin_symbol):
                 if response.status == 200:
                     data = await response.json()
                     if 'price' in data:
-                        price = float(data['price'])
-                        # Update cache and last call time
-                        price_cache[coin_symbol] = (current_time, price)
-                        last_api_call = current_time
-                        return price
+                        return float(data['price'])
                 
-        # Fallback to CoinGecko with rate limiting
-        await asyncio.sleep(1)  # Ensure we don't hit rate limits
+        # Fallback to CoinGecko
         url = f"https://api.coingecko.com/api/v3/simple/price?ids={base_symbol.lower()}&vs_currencies=usd"
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
                     if base_symbol.lower() in data:
-                        price = data[base_symbol.lower()]['usd']
-                        # Update cache and last call time
-                        price_cache[coin_symbol] = (current_time, price)
-                        last_api_call = current_time
-                        return price
+                        return data[base_symbol.lower()]['usd']
                 
         return None
     except Exception as e:
@@ -249,25 +198,26 @@ def create_percentage_table(coin_name, entry_price, targets, stop_losses):
         logger.error(f"Error creating percentage table: {str(e)}")
         return "Error creating percentage table."
 
-# Improved function to detect message type with better pattern matching
+# IMPROVED: Function to detect message type with better pattern matching
 def detect_message_type(text):
     # Check for Daily Recap
     if re.search(r'Daily\s+Results|每日結算統計|Results', text, re.IGNORECASE):
         return "DAILY_RECAP"
     
-    # Check for Target Hit - improved patterns
+    # Check for Target Hit - IMPROVED to catch more patterns including checkmarks
     if (re.search(r'Hitted\s+target|Reached\s+target', text, re.IGNORECASE) or 
         re.search(r'Target\s+\d+.*?[✅🟢]', text, re.IGNORECASE) or
         re.search(r'Target\s+\d+\s*[:]\s*\d+.*?[✅🟢]', text, re.IGNORECASE)):
         return "TARGET_HIT"
     
-    # Check for Stop Loss Hit - improved patterns
+    # Check for Stop Loss Hit - IMPROVED to catch more patterns
     if (re.search(r'Hitted\s+stop\s+loss|Stop\s+loss\s+triggered', text, re.IGNORECASE) or
         re.search(r'Stop\s+loss\s+\d+.*?[🛑🔴]', text, re.IGNORECASE) or
         re.search(r'Stop\s+loss\s+\d+\s*[:]\s*\d+.*?[🛑🔴]', text, re.IGNORECASE)):
         return "STOP_LOSS_HIT"
     
     # Check if it's a very short message with just coin name and target/price
+    # This is a specific case for short messages like in your example
     if len(text.strip().split('\n')) <= 2 and ('USDT' in text or 'BTC' in text):
         # If very short message contains a checkmark, it's likely a target hit
         if '✅' in text or '🟢' in text:
@@ -366,33 +316,40 @@ def extract_trading_data(message_text):
             'stop_losses': []
         }
 
-# Updated function to extract data from target hit/stop loss message with multiple targets
+# Function to extract data from target hit/stop loss message
 def extract_hit_data(message_text):
-    data = {
-        'coin': None,
-        'levels': [],  # Changed from single level to list of levels
-        'prices': []   # Changed from single price to list of prices
-    }
+    data = {'coin': None, 'level': None, 'price': None}
     
     # Find coin name
     coin_match = re.search(r'([A-Za-z0-9]+)(USDT|BTC|ETH|BNB)', message_text)
     if coin_match:
         data['coin'] = coin_match.group(0)
     
-    # Find all targets in the message
-    # Use findall instead of search to find all matches
-    all_targets = re.findall(r'Target\s+(\d+)[:\s]+([0-9.]+)\s*[✅🟢]', message_text, re.IGNORECASE)
+    # Find target level and price
+    target_match = None
+    if "target" in message_text.lower():
+        target_match = re.search(r'Target\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
     
-    for target_num, price in all_targets:
-        data['levels'].append(f"Target {target_num}")
-        data['prices'].append(price)
+    # If specific format from example images
+    if not target_match and '✅' in message_text:
+        target_match = re.search(r'Target\s+(\d+):\s*([0-9.]+)\s*[✅]', message_text, re.IGNORECASE)
     
-    # Find all stop losses in the message
-    all_stops = re.findall(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)\s*[🛑🔴]', message_text, re.IGNORECASE)
+    if target_match:
+        data['level'] = f"Target {target_match.group(1)}"
+        data['price'] = target_match.group(2)
     
-    for stop_num, price in all_stops:
-        data['levels'].append(f"Stop Loss {stop_num}")
-        data['prices'].append(price)
+    # Find stop loss level and price
+    sl_match = None
+    if "stop loss" in message_text.lower():
+        sl_match = re.search(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
+    
+    # If specific format with red mark
+    if not sl_match and ('🛑' in message_text or '🔴' in message_text):
+        sl_match = re.search(r'Stop\s+loss\s+(\d+):\s*([0-9.]+)\s*[🛑🔴]', message_text, re.IGNORECASE)
+    
+    if sl_match:
+        data['level'] = f"Stop Loss {sl_match.group(1)}"
+        data['price'] = sl_match.group(2)
     
     return data
 
@@ -469,28 +426,23 @@ def create_win_rate_table(recap_data):
     
     return table
 
-# Improved function to run Telethon client - NO RAISES, ONLY RETURNS STATUS
+# Improved function to run Telethon client with better error handling
 async def run_client():
-    """Run the Telegram client and handle all message processing.
-    Returns True if exited cleanly, False if there was an error."""
-    
-    # Handle session file
-    session_name = 'telegram_forwarder_session'
-    session_file = f'{session_name}.session'
-    
-    # Check if session file exists and might be corrupted
-    if os.path.exists(session_file):
-        try:
-            # Create backup before potentially deleting
-            backup_path = f"{session_file}.bak.{int(time.time())}"
-            shutil.copy2(session_file, backup_path)
-            logger.info(f"Created session backup at {backup_path}")
-        except Exception as e:
-            logger.error(f"Failed to backup session: {str(e)}")
-    
-    # Create client
-    client = None
     try:
+        # Handle session file
+        session_name = 'telegram_forwarder_session'
+        session_file = f'{session_name}.session'
+        
+        # Check if session file exists and might be corrupted
+        if os.path.exists(session_file):
+            try:
+                # Create backup before potentially deleting
+                backup_path = f"{session_file}.bak.{int(time.time())}"
+                shutil.copy2(session_file, backup_path)
+                logger.info(f"Created session backup at {backup_path}")
+            except Exception as e:
+                logger.error(f"Failed to backup session: {str(e)}")
+        
         # Create message queue for rate limiting
         message_queue = asyncio.Queue()
         
@@ -508,18 +460,7 @@ async def run_client():
         async def message_sender():
             while True:
                 try:
-                    # Check if we should still be running
-                    if not st.session_state.get('running', False):
-                        logger.info("Message sender stopping due to bot shutdown")
-                        break
-                        
-                    # Get task from queue with timeout
-                    try:
-                        task = await asyncio.wait_for(message_queue.get(), timeout=5.0)
-                    except asyncio.TimeoutError:
-                        # No message in queue, continue loop
-                        continue
-                    
+                    task = await message_queue.get()
                     target = task.get('target')
                     message = task.get('message')
                     media = task.get('media')
@@ -536,99 +477,17 @@ async def run_client():
                         logger.info(log_msg)
                         write_log(log_msg)
                         
-                        # Update forwarded count
-                        try:
-                            current_count = st.session_state.get('total_forwarded', 0)
-                            st.session_state['total_forwarded'] = current_count + 1
-                        except Exception as counter_error:
-                            logger.error(f"Error updating message counter: {str(counter_error)}")
-                            
                     except FloodWaitError as e:
                         # Handle rate limiting
                         wait_time = e.seconds
                         logger.warning(f"Rate limit hit. Waiting for {wait_time} seconds")
                         write_log(f"Rate limit hit. Waiting for {wait_time} seconds")
-                        await asyncio.sleep(60)
-        
-        # Start message sender task
-        sender_task = asyncio.create_task(message_sender())
-        
-        # Start health check task
-        health_task = asyncio.create_task(health_check())
-        
-        # Start scheduled restart task
-        restart_task = asyncio.create_task(scheduled_restart())
-        
-        # Run client
-        write_log("Starting Telegram client...")
-        try:
-            await client.start(PHONE_NUMBER, code_callback=code_callback)
-        except SessionPasswordNeededError:
-            # Handle 2FA if needed
-            write_log("Two-factor authentication required. Please enter your password in the verification code field.")
-            # Wait for password
-            while not os.path.exists(VERIFICATION_CODE_FILE):
-                await asyncio.sleep(1)
-            
-            # Read password
-            with open(VERIFICATION_CODE_FILE, "r") as f:
-                password = f.read().strip()
-            
-            # Remove file after reading
-            os.remove(VERIFICATION_CODE_FILE)
-            
-            # Sign in with password
-            await client.sign_in(password=password)
-        except Exception as e:
-            logger.error(f"Error starting client: {str(e)}")
-            write_log(f"Error starting client: {str(e)}", True)
-            
-            # Instead of raising, flag restart and return False
-            st.session_state['restart_required'] = True
-            return False
-        
-        log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
-        logger.info(log_msg)
-        write_log(log_msg)
-        
-        # Run until disconnected
-        try:
-            await client.run_until_disconnected()
-        except Exception as e:
-            error_msg = f"Client disconnected with error: {str(e)}"
-            logger.error(error_msg)
-            write_log(error_msg, True)
-            
-            # Instead of raising, flag restart and return False
-            st.session_state['restart_required'] = True
-            return False
-        
-        # If we reached here, the client exited normally
-        return True
-        
-    except Exception as e:
-        error_msg = f"Error running client: {str(e)}"
-        logger.error(error_msg)
-        write_log(error_msg, True)
-        
-        # If specific errors, delete session file to force clean reconnection
-        if "Constructor ID" in str(e) or "database is locked" in str(e) or "misusing the session" in str(e):
-            try:
-                session_file = 'telegram_forwarder_session.session'
-                if os.path.exists(session_file):
-                    os.remove(session_file)
-                    write_log("Removed corrupted session file", True)
-            except Exception as se:
-                write_log(f"Failed to remove session file: {str(se)}", True)
-        
-        # Set flag for restart instead of raising
-        st.session_state['restart_required'] = True
-        return False(wait_time)
+                        await asyncio.sleep(wait_time)
                         # Re-queue the message
                         await message_queue.put(task)
-                    except Exception as send_error:
-                        logger.error(f"Error sending message: {str(send_error)}")
-                        write_log(f"Error sending message: {str(send_error)}", True)
+                    except Exception as e:
+                        logger.error(f"Error sending message: {str(e)}")
+                        write_log(f"Error sending message: {str(e)}", True)
                     
                     # Add delay between messages to prevent rate limiting
                     await asyncio.sleep(1)
@@ -641,10 +500,6 @@ async def run_client():
         @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
         async def handler(event):
             try:
-                # Check if we should be processing messages
-                if not st.session_state.get('running', False):
-                    return
-                    
                 message = event.message
                 
                 # If no text, just send media
@@ -652,7 +507,7 @@ async def run_client():
                     if message.media:
                         await message_queue.put({
                             'target': TARGET_CHANNEL_ID,
-                            'message': f"🚀 VIP SIGNAL 🚀",
+                            'message': f"🚀 VIP SIGNAL 🚀\n\nhttps://t.me/+4xrX56bvDhRkODA1",
                             'media': message.media
                         })
                     return
@@ -672,6 +527,7 @@ async def run_client():
                     custom_text = f"📅 DAILY RECAP: {recap_data['date'] if recap_data['date'] else 'Today'} 📅\n\n"
                     custom_text += message.text + "\n\n"
                     custom_text += create_win_rate_table(recap_data)
+                    custom_text += "\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                     
                     # Send message via queue
                     await message_queue.put({
@@ -681,20 +537,19 @@ async def run_client():
                     })
                     
                 elif message_type == "TARGET_HIT":
-                    # Special format for target hit - UPDATED for multiple targets
+                    # Special format for target hit
                     hit_data = extract_hit_data(message.text)
                     
-                    if hit_data['coin'] and hit_data['levels'] and hit_data['prices']:
+                    if hit_data['coin'] and hit_data['level'] and hit_data['price']:
                         # Use "SIGNAL UPDATE" format for target hit
                         custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
-                        
-                        # Add all targets that were hit
-                        for i in range(len(hit_data['levels'])):
-                            custom_text += f"🎯 {hit_data['levels'][i]} ({hit_data['prices'][i]}) HIT!\n"
+                        custom_text += f"🎯 {hit_data['level']} ({hit_data['price']}) HIT!\n\n"
                     else:
                         # If extraction fails, send original message with standard header
                         custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
-                        custom_text += message.text
+                        custom_text += message.text + "\n\n"
+                    
+                    custom_text += "https://t.me/+4xrX56bvDhRkODA1"
                     
                     # Send via queue
                     await message_queue.put({
@@ -704,20 +559,19 @@ async def run_client():
                     })
                     
                 elif message_type == "STOP_LOSS_HIT":
-                    # Special format for stop loss hit - UPDATED for multiple stop losses
+                    # Special format for stop loss hit
                     hit_data = extract_hit_data(message.text)
                     
-                    if hit_data['coin'] and hit_data['levels'] and hit_data['prices']:
+                    if hit_data['coin'] and hit_data['level'] and hit_data['price']:
                         # Use "SIGNAL UPDATE" format for stop loss hit
                         custom_text = f"🔴 SIGNAL UPDATE: {hit_data['coin']} 🔴\n\n"
-                        
-                        # Add all stop losses that were triggered
-                        for i in range(len(hit_data['levels'])):
-                            custom_text += f"⚠️ {hit_data['levels'][i]} ({hit_data['prices'][i]}) TRIGGERED!\n"
+                        custom_text += f"⚠️ {hit_data['level']} ({hit_data['price']}) TRIGGERED!\n\n"
                     else:
                         # If extraction fails, send original message with standard header
                         custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
-                        custom_text += message.text
+                        custom_text += message.text + "\n\n"
+                    
+                    custom_text += "https://t.me/+4xrX56bvDhRkODA1"
                     
                     # Send via queue
                     await message_queue.put({
@@ -752,9 +606,12 @@ async def run_client():
                         # Add percentage table if data is sufficient
                         if targets or stop_losses:
                             custom_text += create_percentage_table(coin_name, entry_price, targets, stop_losses)
+                        
+                        # Footer
+                        custom_text += "\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                     else:
                         # Default format if data is incomplete
-                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}"
+                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}\n\nhttps://t.me/+4xrX56bvDhRkODA1"
                     
                     # Send via queue
                     await message_queue.put({
@@ -764,7 +621,7 @@ async def run_client():
                     })
                     
             except Exception as e:
-                error_msg = f"Error processing message: {str(e)}"
+                error_msg = f"Error sending message: {str(e)}"
                 logger.error(error_msg)
                 write_log(error_msg, True)
         
@@ -772,11 +629,6 @@ async def run_client():
         async def health_check():
             while True:
                 try:
-                    # Check if we should still be running
-                    if not st.session_state.get('running', False):
-                        logger.info("Health check stopping due to bot shutdown")
-                        break
-                        
                     await asyncio.sleep(300)  # Check every 5 minutes
                     if not client.is_connected():
                         logger.warning("Client disconnected, attempting to reconnect...")
@@ -787,10 +639,278 @@ async def run_client():
                         except Exception as e:
                             logger.error(f"Failed to reconnect: {str(e)}")
                             write_log(f"Reconnection failed: {str(e)}", True)
-                            # Instead of raising, set the restart flag
-                            st.session_state['restart_required'] = True
-                            return False
+                            # If reconnection fails, raise exception to trigger restart
+                            raise
                 except Exception as e:
                     logger.error(f"Error in health check: {str(e)}")
                     # Sleep before retrying health check
-                    await asyncio.sleep
+                    await asyncio.sleep(60)
+        
+        # Start message sender task
+        sender_task = asyncio.create_task(message_sender())
+        
+        # Start health check task
+        health_task = asyncio.create_task(health_check())
+        
+        # Start scheduled restart task
+        restart_task = asyncio.create_task(scheduled_restart())
+        
+        # Run client
+        write_log("Starting Telegram client...")
+        try:
+            await client.start(PHONE_NUMBER, code_callback=code_callback)
+        except SessionPasswordNeededError:
+            # Handle 2FA if needed
+            write_log("Two-factor authentication required. Please enter your password in the verification code field.")
+            # Wait for password
+            while not os.path.exists(VERIFICATION_CODE_FILE):
+                await asyncio.sleep(1)
+            
+            # Read password
+            with open(VERIFICATION_CODE_FILE, "r") as f:
+                password = f.read().strip()
+            
+            # Remove file after reading
+            os.remove(VERIFICATION_CODE_FILE)
+            
+            # Sign in with password
+            await client.sign_in(password=password)
+        
+        log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
+        logger.info(log_msg)
+        write_log(log_msg)
+        
+        # Run until disconnected
+        try:
+            await client.run_until_disconnected()
+        except Exception as e:
+            error_msg = f"Client disconnected with error: {str(e)}"
+            logger.error(error_msg)
+            write_log(error_msg, True)
+            raise  # Re-raise to trigger restart
+        
+    except Exception as e:
+        error_msg = f"Error running client: {str(e)}"
+        logger.error(error_msg)
+        write_log(error_msg, True)
+        
+        # If specific errors, delete session file to force clean reconnection
+        if "Constructor ID" in str(e) or "database is locked" in str(e) or "misusing the session" in str(e):
+            try:
+                session_file = 'telegram_forwarder_session.session'
+                if os.path.exists(session_file):
+                    os.remove(session_file)
+                    write_log("Removed corrupted session file", True)
+            except Exception as se:
+                write_log(f"Failed to remove session file: {str(se)}", True)
+        
+        # Set flag for restart
+        st.session_state['restart_required'] = True
+        
+        # Re-raise exception to allow restart mechanism to work
+        raise
+
+# Function to run client in separate thread with better error handling and restart
+def start_client_thread():
+    try:
+        write_log("Starting client in separate thread...")
+        
+        # Create new event loop for this thread
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        loop = asyncio.get_event_loop()
+        
+        # Implement restart with backoff
+        # Implement restart with backoff
+        max_attempts = 5
+        current_attempt = 0
+        
+        while current_attempt < max_attempts and st.session_state['running']:
+            try:
+                loop.run_until_complete(run_client())
+                break  # If run_client completes normally, exit loop
+            except Exception as e:
+                current_attempt += 1
+                # Calculate backoff time with exponential increase but max 60 seconds
+                backoff_time = min(60, 5 * (2 ** (current_attempt - 1)))
+                
+                error_msg = f"Client failed (attempt {current_attempt}/{max_attempts}): {str(e)}"
+                logger.error(error_msg)
+                write_log(error_msg, True)
+                
+                # Only retry if bot is still marked as running
+                if current_attempt < max_attempts and st.session_state['running']:
+                    write_log(f"Akan mencoba ulang dalam {backoff_time} detik...")
+                    time.sleep(backoff_time)
+                    
+                    # If session error, try to delete session file before retry
+                    if "database is locked" in str(e) or "Constructor ID" in str(e) or "misusing the session" in str(e):
+                        try:
+                            session_file = 'telegram_forwarder_session.session'
+                            if os.path.exists(session_file):
+                                os.remove(session_file)
+                                write_log("Menghapus file sesi yang rusak sebelum mencoba ulang")
+                        except Exception as se:
+                            write_log(f"Gagal menghapus file sesi: {str(se)}", True)
+                else:
+                    write_log("Batas maksimum percobaan tercapai atau bot dihentikan")
+                    st.session_state['running'] = False
+                    break
+    except Exception as e:
+        error_msg = f"Error kritis dalam thread: {str(e)}"
+        logger.error(error_msg)
+        write_log(error_msg, True)
+        st.session_state['running'] = False
+
+# Function to save verification code
+def save_verification_code():
+    if st.session_state.code_input:
+        try:
+            with open(VERIFICATION_CODE_FILE, "w") as f:
+                f.write(st.session_state.code_input)
+            st.success("Kode verifikasi terkirim!")
+        except Exception as e:
+            st.error(f"Gagal menyimpan kode verifikasi: {str(e)}")
+
+# Function to restart bot after error
+def restart_bot():
+    write_log("Memulai ulang bot setelah error...")
+    # Reset flag
+    st.session_state['restart_required'] = False
+    
+    # Check if bot is running
+    if st.session_state['running']:
+        # Set to not running temporarily
+        st.session_state['running'] = False
+        time.sleep(2)
+    
+    # Check and delete session file if exists
+    try:
+        session_file = 'telegram_forwarder_session.session'
+        if os.path.exists(session_file):
+            os.remove(session_file)
+            write_log("Menghapus file sesi untuk restart bersih")
+    except Exception as e:
+        write_log(f"Gagal menghapus file sesi: {str(e)}", True)
+    
+    # Start bot again
+    thread = threading.Thread(target=start_client_thread, daemon=True)
+    thread.start()
+    
+    # Mark as running
+    st.session_state['running'] = True
+    write_log("Bot berhasil dimulai ulang!")
+
+# Streamlit UI
+st.title("Telegram Channel Forwarder")
+st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel target Anda.")
+
+# Column for verification code
+if st.session_state['running']:
+    st.text_input("Masukkan Kode Verifikasi dari Telegram (jika diminta):", 
+                  key="code_input", 
+                  on_change=save_verification_code)
+
+# Display status and statistics
+st.subheader("Status & Statistik")
+col1, col2 = st.columns(2)
+with col1:
+    status = "🟢 **Berjalan**" if st.session_state['running'] else "🔴 **Berhenti**"
+    st.markdown(f"**Status Bot:** {status}")
+with col2:
+    # Update total forwarded from log
+    forwarded_count = 0
+    for log in read_logs():
+        if "Message successfully forwarded" in log['message']:
+            forwarded_count += 1
+    st.session_state['total_forwarded'] = forwarded_count
+    st.markdown(f"**Total Pesan Terkirim:** {st.session_state['total_forwarded']}")
+
+# Start/stop buttons
+col1, col2 = st.columns(2)
+with col1:
+    if not st.session_state['running']:
+        if st.button("Mulai Bot", use_container_width=True):
+            # Create log file if it doesn't exist
+            if not os.path.exists(LOG_FILE):
+                with open(LOG_FILE, "w") as f:
+                    f.write("")
+            
+            # Run client in separate thread
+            thread = threading.Thread(target=start_client_thread, daemon=True)
+            thread.start()
+            
+            st.session_state['running'] = True
+            write_log("Bot sedang memulai...")
+            st.rerun()
+with col2:
+    if st.session_state['running']:
+        if st.button("Hentikan Bot", use_container_width=True):
+            # Stop client - no direct way to stop thread
+            # Just mark as not running
+            st.session_state['running'] = False
+            write_log("Bot dihentikan!")
+            st.rerun()
+
+# Add restart button
+if st.session_state['running']:
+    if st.button("Restart Bot", use_container_width=True):
+        restart_bot()
+        st.rerun()
+
+# Display activity log
+st.subheader("Log Aktivitas")
+log_container = st.container()
+with log_container:
+    # Read logs from file
+    logs = read_logs()
+    # Display last 10 logs
+    if logs:
+        for log in reversed(logs[-10:]):
+            timestamp = log.get('time', '')
+            message = log.get('message', '')
+            is_error = log.get('error', False)
+            
+            if is_error:
+                st.error(f"{timestamp} - {message}")
+            else:
+                st.info(f"{timestamp} - {message}")
+
+# Add usage instructions
+with st.expander("Cara Penggunaan"):
+    st.markdown("""
+    ### Cara Menggunakan Aplikasi Ini:
+    
+    1. **Menjalankan Bot**:
+       - Klik "Mulai Bot" untuk memulai
+       - Pertama kali, Anda mungkin diminta memasukkan kode verifikasi
+       - Klik "Hentikan Bot" untuk menghentikan bot
+       - Klik "Restart Bot" untuk memulai ulang bot jika terjadi masalah
+    
+    2. **Kode Verifikasi**:
+       - Saat pertama dijalankan, Telegram akan mengirimkan kode verifikasi ke nomor telepon Anda
+       - Masukkan kode tersebut di kolom "Kode Verifikasi" yang muncul
+    
+    3. **Fitur Otomatis**:
+       - Bot akan otomatis restart setiap 12 jam untuk menjaga stabilitas
+       - Bot akan otomatis mendeteksi dan mengatasi masalah koneksi
+       - Bot akan menangani batasan rate limit Telegram secara otomatis
+    
+    4. **Format Pesan**:
+       - Sinyal trading baru: "VIP SIGNAL" dengan kalkulasi persentase perubahan harga
+       - Update target tercapai: "SIGNAL UPDATE" dengan format sederhana
+       - Update stop loss terpicu: "SIGNAL UPDATE" dengan format sederhana
+       - Rekap harian: Ditambahkan kalkulasi win rate dan statistik
+    
+    5. **Pemecahan Masalah**:
+       - Jika terjadi error, bot akan mencoba restart otomatis
+       - Pastikan akun Anda memiliki akses ke kedua channel
+       - Jika bot terus mengalami masalah, coba restart manual
+    """)
+
+# Check if restart is required
+if st.session_state.get('restart_required', False):
+    restart_bot()
+
+# Auto-refresh page every 5 seconds
+time.sleep(5)
+st.rerun()
