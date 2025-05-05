@@ -35,6 +35,21 @@ if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
 if 'total_forwarded' not in st.session_state:
     st.session_state.total_forwarded = 0
+if 'verification_needed' not in st.session_state:
+    st.session_state.verification_needed = False
+if 'verification_code' not in st.session_state:
+    st.session_state.verification_code = ""
+
+# Fungsi untuk menangani verifikasi
+def code_callback():
+    if st.session_state.code_input:
+        st.session_state.verification_code = st.session_state.code_input
+        st.session_state.verification_needed = False
+        st.session_state.log_messages.append({
+            'time': datetime.now().strftime("%H:%M:%S"),
+            'message': "Kode verifikasi telah dimasukkan. Menghubungkan kembali...",
+            'error': False
+        })
 
 # Fungsi untuk menjalankan client Telethon
 async def run_client():
@@ -47,6 +62,16 @@ async def run_client():
     
     # Buat client
     client = TelegramClient('telegram_forwarder_session', api_id, api_hash)
+    
+    # Fungsi untuk menangani kode verifikasi
+    async def code_callback():
+        while st.session_state.verification_needed:
+            if st.session_state.verification_code:
+                code = st.session_state.verification_code
+                st.session_state.verification_code = ""
+                return code
+            await asyncio.sleep(1)
+        return None
     
     @client.on(events.NewMessage(chats=source_id))
     async def handler(event):
@@ -84,19 +109,31 @@ async def run_client():
             })
     
     # Jalankan client
-    await client.start(phone)
-    logger.info(f"Bot telah aktif! Memantau channel ID: {source_id}")
-    st.session_state.log_messages.append({
-        'time': datetime.now().strftime("%H:%M:%S"),
-        'message': f"Bot berhasil diaktifkan. Memantau channel: {source_id}",
-        'error': False
-    })
-    
-    # Simpan client di session state
-    st.session_state.client = client
-    
-    # Jalankan hingga dihentikan
-    await client.run_until_disconnected()
+    try:
+        st.session_state.verification_needed = True
+        await client.start(phone, code_callback=code_callback)
+        st.session_state.verification_needed = False
+        logger.info(f"Bot telah aktif! Memantau channel ID: {source_id}")
+        st.session_state.log_messages.append({
+            'time': datetime.now().strftime("%H:%M:%S"),
+            'message': f"Bot berhasil diaktifkan. Memantau channel: {source_id}",
+            'error': False
+        })
+        
+        # Simpan client di session state
+        st.session_state.client = client
+        
+        # Jalankan hingga dihentikan
+        await client.run_until_disconnected()
+    except Exception as e:
+        error_msg = f"Error saat menjalankan client: {str(e)}"
+        logger.error(error_msg)
+        st.session_state.log_messages.append({
+            'time': datetime.now().strftime("%H:%M:%S"),
+            'message': error_msg,
+            'error': True
+        })
+        st.session_state.running = False
 
 # Fungsi untuk menjalankan client dalam thread terpisah
 def start_client_thread():
@@ -128,11 +165,10 @@ with col1:
 with col2:
     st.markdown(f"**Total Pesan Diteruskan:** {st.session_state.total_forwarded}")
 
-# Tampilkan area untuk memasukkan kode verifikasi jika aplikasi sedang berjalan
-if st.session_state.running:
-    verification_code = st.text_input("Kode Verifikasi (jika diminta)", "")
-    if verification_code:
-        st.info("Kode verifikasi telah dimasukkan. Jika kode valid, bot akan segera berjalan.")
+# Tampilkan area untuk memasukkan kode verifikasi jika dibutuhkan
+if st.session_state.verification_needed and st.session_state.running:
+    st.warning("Telegram meminta kode verifikasi. Silakan cek pesan di Telegram Anda dan masukkan kode di bawah ini.")
+    st.text_input("Kode Verifikasi", key="code_input", on_change=code_callback)
 
 # Tombol start/stop
 col1, col2 = st.columns(2)
@@ -156,6 +192,7 @@ with col2:
             # Hentikan client
             stop_client_thread()
             st.session_state.running = False
+            st.session_state.verification_needed = False
             st.session_state.log_messages.append({
                 'time': datetime.now().strftime("%H:%M:%S"),
                 'message': "Bot stopped!",
