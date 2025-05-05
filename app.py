@@ -57,18 +57,6 @@ if 'code_input' not in st.session_state:
 if 'client_thread' not in st.session_state:
     st.session_state['client_thread'] = None
 
-# Utility function for safely accessing session state
-def safe_session_state(key, default_value=None, set_value=None):
-    """Safely get or set a session state value"""
-    try:
-        if set_value is not None:
-            st.session_state[key] = set_value
-            return True
-        return st.session_state.get(key, default_value)
-    except Exception as e:
-        logger.error(f"Error accessing session state {key}: {str(e)}")
-        return default_value
-
 # Function to save log to file
 def write_log(message, is_error=False):
     try:
@@ -80,7 +68,7 @@ def write_log(message, is_error=False):
             
         # Update session state log messages for UI display
         try:
-            logs = safe_session_state('log_messages', [])
+            logs = st.session_state.get('log_messages', [])
             logs.append({
                 'time': timestamp,
                 'message': message,
@@ -89,7 +77,7 @@ def write_log(message, is_error=False):
             # Keep only last 100 logs in memory
             if len(logs) > 100:
                 logs = logs[-100:]
-            safe_session_state('log_messages', set_value=logs)
+            st.session_state['log_messages'] = logs
         except Exception as e:
             logger.error(f"Failed to update session log messages: {str(e)}")
             
@@ -153,7 +141,7 @@ async def scheduled_restart(restart_interval=RESTART_INTERVAL):
         write_log(f"Scheduled restart after {restart_interval//3600} hours of operation")
         
         # Set flag for restart
-        safe_session_state('restart_required', set_value=True)
+        st.session_state['restart_required'] = True
     except Exception as e:
         logger.error(f"Error in scheduled restart: {str(e)}")
 
@@ -481,23 +469,28 @@ def create_win_rate_table(recap_data):
     
     return table
 
-# Improved function to run Telethon client with better error handling
+# Improved function to run Telethon client - NO RAISES, ONLY RETURNS STATUS
 async def run_client():
+    """Run the Telegram client and handle all message processing.
+    Returns True if exited cleanly, False if there was an error."""
+    
+    # Handle session file
+    session_name = 'telegram_forwarder_session'
+    session_file = f'{session_name}.session'
+    
+    # Check if session file exists and might be corrupted
+    if os.path.exists(session_file):
+        try:
+            # Create backup before potentially deleting
+            backup_path = f"{session_file}.bak.{int(time.time())}"
+            shutil.copy2(session_file, backup_path)
+            logger.info(f"Created session backup at {backup_path}")
+        except Exception as e:
+            logger.error(f"Failed to backup session: {str(e)}")
+    
+    # Create client
+    client = None
     try:
-        # Handle session file
-        session_name = 'telegram_forwarder_session'
-        session_file = f'{session_name}.session'
-        
-        # Check if session file exists and might be corrupted
-        if os.path.exists(session_file):
-            try:
-                # Create backup before potentially deleting
-                backup_path = f"{session_file}.bak.{int(time.time())}"
-                shutil.copy2(session_file, backup_path)
-                logger.info(f"Created session backup at {backup_path}")
-            except Exception as e:
-                logger.error(f"Failed to backup session: {str(e)}")
-        
         # Create message queue for rate limiting
         message_queue = asyncio.Queue()
         
@@ -516,13 +509,7 @@ async def run_client():
             while True:
                 try:
                     # Check if we should still be running
-                    running = False
-                    try:
-                        running = safe_session_state('running', False)
-                    except:
-                        pass
-                    
-                    if not running:
+                    if not st.session_state.get('running', False):
                         logger.info("Message sender stopping due to bot shutdown")
                         break
                         
@@ -551,22 +538,97 @@ async def run_client():
                         
                         # Update forwarded count
                         try:
-                            current_count = safe_session_state('total_forwarded', 0)
-                            safe_session_state('total_forwarded', set_value=current_count + 1)
-                        except:
-                            pass
+                            current_count = st.session_state.get('total_forwarded', 0)
+                            st.session_state['total_forwarded'] = current_count + 1
+                        except Exception as counter_error:
+                            logger.error(f"Error updating message counter: {str(counter_error)}")
                             
                     except FloodWaitError as e:
                         # Handle rate limiting
                         wait_time = e.seconds
                         logger.warning(f"Rate limit hit. Waiting for {wait_time} seconds")
                         write_log(f"Rate limit hit. Waiting for {wait_time} seconds")
-                        await asyncio.sleep(wait_time)
+                        await asyncio.sleep(60)
+        
+        # Start message sender task
+        sender_task = asyncio.create_task(message_sender())
+        
+        # Start health check task
+        health_task = asyncio.create_task(health_check())
+        
+        # Start scheduled restart task
+        restart_task = asyncio.create_task(scheduled_restart())
+        
+        # Run client
+        write_log("Starting Telegram client...")
+        try:
+            await client.start(PHONE_NUMBER, code_callback=code_callback)
+        except SessionPasswordNeededError:
+            # Handle 2FA if needed
+            write_log("Two-factor authentication required. Please enter your password in the verification code field.")
+            # Wait for password
+            while not os.path.exists(VERIFICATION_CODE_FILE):
+                await asyncio.sleep(1)
+            
+            # Read password
+            with open(VERIFICATION_CODE_FILE, "r") as f:
+                password = f.read().strip()
+            
+            # Remove file after reading
+            os.remove(VERIFICATION_CODE_FILE)
+            
+            # Sign in with password
+            await client.sign_in(password=password)
+        except Exception as e:
+            logger.error(f"Error starting client: {str(e)}")
+            write_log(f"Error starting client: {str(e)}", True)
+            
+            # Instead of raising, flag restart and return False
+            st.session_state['restart_required'] = True
+            return False
+        
+        log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
+        logger.info(log_msg)
+        write_log(log_msg)
+        
+        # Run until disconnected
+        try:
+            await client.run_until_disconnected()
+        except Exception as e:
+            error_msg = f"Client disconnected with error: {str(e)}"
+            logger.error(error_msg)
+            write_log(error_msg, True)
+            
+            # Instead of raising, flag restart and return False
+            st.session_state['restart_required'] = True
+            return False
+        
+        # If we reached here, the client exited normally
+        return True
+        
+    except Exception as e:
+        error_msg = f"Error running client: {str(e)}"
+        logger.error(error_msg)
+        write_log(error_msg, True)
+        
+        # If specific errors, delete session file to force clean reconnection
+        if "Constructor ID" in str(e) or "database is locked" in str(e) or "misusing the session" in str(e):
+            try:
+                session_file = 'telegram_forwarder_session.session'
+                if os.path.exists(session_file):
+                    os.remove(session_file)
+                    write_log("Removed corrupted session file", True)
+            except Exception as se:
+                write_log(f"Failed to remove session file: {str(se)}", True)
+        
+        # Set flag for restart instead of raising
+        st.session_state['restart_required'] = True
+        return False(wait_time)
                         # Re-queue the message
                         await message_queue.put(task)
-                    except Exception as e:
-                        logger.error(f"Error sending message: {str(e)}")
-                        write_log(f"Error sending message: {str(e)}", True)
+                    except Exception as send_error:
+                        logger.error(f"Error sending message: {str(send_error)}")
+                        write_log(f"Error sending message: {str(send_error)}", True)
                     
                     # Add delay between messages to prevent rate limiting
                     await asyncio.sleep(1)
@@ -580,13 +642,7 @@ async def run_client():
         async def handler(event):
             try:
                 # Check if we should be processing messages
-                running = False
-                try:
-                    running = safe_session_state('running', False)
-                except:
-                    pass
-                    
-                if not running:
+                if not st.session_state.get('running', False):
                     return
                     
                 message = event.message
@@ -717,13 +773,7 @@ async def run_client():
             while True:
                 try:
                     # Check if we should still be running
-                    running = False
-                    try:
-                        running = safe_session_state('running', False)
-                    except:
-                        pass
-                        
-                    if not running:
+                    if not st.session_state.get('running', False):
                         logger.info("Health check stopping due to bot shutdown")
                         break
                         
@@ -737,73 +787,10 @@ async def run_client():
                         except Exception as e:
                             logger.error(f"Failed to reconnect: {str(e)}")
                             write_log(f"Reconnection failed: {str(e)}", True)
-                            # If reconnection fails, raise exception to trigger restart
-                            raise
+                            # Instead of raising, set the restart flag
+                            st.session_state['restart_required'] = True
+                            return False
                 except Exception as e:
                     logger.error(f"Error in health check: {str(e)}")
                     # Sleep before retrying health check
-                    await asyncio.sleep(60)
-        
-        # Start message sender task
-        sender_task = asyncio.create_task(message_sender())
-        
-        # Start health check task
-        health_task = asyncio.create_task(health_check())
-        
-        # Start scheduled restart task
-        restart_task = asyncio.create_task(scheduled_restart())
-        
-        # Run client
-        write_log("Starting Telegram client...")
-        try:
-            await client.start(PHONE_NUMBER, code_callback=code_callback)
-        except SessionPasswordNeededError:
-            # Handle 2FA if needed
-            write_log("Two-factor authentication required. Please enter your password in the verification code field.")
-            # Wait for password
-            while not os.path.exists(VERIFICATION_CODE_FILE):
-                await asyncio.sleep(1)
-            
-            # Read password
-            with open(VERIFICATION_CODE_FILE, "r") as f:
-                password = f.read().strip()
-            
-            # Remove file after reading
-            os.remove(VERIFICATION_CODE_FILE)
-            
-            # Sign in with password
-            await client.sign_in(password=password)
-        
-        log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
-        logger.info(log_msg)
-        write_log(log_msg)
-        
-        # Run until disconnected
-        try:
-            await client.run_until_disconnected()
-        except Exception as e:
-            error_msg = f"Client disconnected with error: {str(e)}"
-            logger.error(error_msg)
-            write_log(error_msg, True)
-            raise  # Re-raise to trigger restart
-        
-    except Exception as e:
-        error_msg = f"Error running client: {str(e)}"
-        logger.error(error_msg)
-        write_log(error_msg, True)
-        
-        # If specific errors, delete session file to force clean reconnection
-        if "Constructor ID" in str(e) or "database is locked" in str(e) or "misusing the session" in str(e):
-            try:
-                session_file = 'telegram_forwarder_session.session'
-                if os.path.exists(session_file):
-                    os.remove(session_file)
-                    write_log("Removed corrupted session file", True)
-            except Exception as se:
-                write_log(f"Failed to remove session file: {str(se)}", True)
-        
-        # Set flag for restart
-        safe_session_state('restart_required', set_value=True)
-        
-        # Re-raise exception to allow restart mechanism to work
-        raise
+                    await asyncio.sleep
