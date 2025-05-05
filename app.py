@@ -35,18 +35,25 @@ if 'log_messages' not in st.session_state:
     st.session_state.log_messages = []
 if 'total_forwarded' not in st.session_state:
     st.session_state.total_forwarded = 0
-    
+
+# Kredensial dan konfigurasi dari secrets
+API_ID = 28690093
+API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
+PHONE_NUMBER = "+6285161054271"
+SOURCE_CHANNEL_ID = -1002051092635
+TARGET_CHANNEL_ID = -4628225750
+
 # Inisialisasi session state untuk kredensial
 if 'api_id' not in st.session_state:
-    st.session_state.api_id = None
+    st.session_state.api_id = API_ID
 if 'api_hash' not in st.session_state:
-    st.session_state.api_hash = None
+    st.session_state.api_hash = API_HASH
 if 'phone' not in st.session_state:
-    st.session_state.phone = None
+    st.session_state.phone = PHONE_NUMBER
 if 'source_id' not in st.session_state:
-    st.session_state.source_id = None
+    st.session_state.source_id = SOURCE_CHANNEL_ID
 if 'target_id' not in st.session_state:
-    st.session_state.target_id = None
+    st.session_state.target_id = TARGET_CHANNEL_ID
 
 # Fungsi untuk menjalankan client Telethon
 async def run_client(api_id, api_hash, phone, source_id, target_id):
@@ -130,62 +137,6 @@ def stop_client_thread():
 st.title("Telegram Channel Forwarder")
 st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel tujuan Anda.")
 
-# Sidebar untuk konfigurasi
-with st.sidebar:
-    st.header("Konfigurasi")
-    
-    # Tampilkan API credentials 
-    st.subheader("Telegram API Credentials")
-    api_id = st.text_input("API ID", value="")
-    api_hash = st.text_input("API Hash", value="", type="password")
-    phone = st.text_input("Nomor Telepon", value="")
-    
-    # Tampilkan channel IDs
-    st.subheader("Channel Settings")
-    source_id = st.text_input("Source Channel ID", value="")
-    target_id = st.text_input("Target Channel ID", value="")
-    
-    # Tombol start/stop
-    col1, col2 = st.columns(2)
-    with col1:
-        if not st.session_state.running:
-            if st.button("Start Forwarding", use_container_width=True):
-                if api_id and api_hash and phone and source_id and target_id:
-                    try:
-                        # Simpan konfigurasi ke session state
-                        st.session_state.api_id = int(api_id)
-                        st.session_state.api_hash = api_hash
-                        st.session_state.phone = phone
-                        st.session_state.source_id = int(source_id)
-                        st.session_state.target_id = int(target_id)
-                        
-                        # Jalankan client di thread terpisah
-                        thread = threading.Thread(target=start_client_thread)
-                        thread.daemon = True
-                        thread.start()
-                        
-                        st.session_state.running = True
-                        st.session_state.log_messages.append({
-                            'time': datetime.now().strftime("%H:%M:%S"),
-                            'message': "Bot starting...",
-                            'error': False
-                        })
-                    except ValueError as e:
-                        st.error(f"Error: Pastikan semua ID berupa angka. {str(e)}")
-                else:
-                    st.error("Harap isi semua bidang yang diperlukan")
-    with col2:
-        if st.session_state.running:
-            if st.button("Stop Forwarding", use_container_width=True):
-                # Hentikan client
-                stop_client_thread()
-                st.session_state.running = False
-                st.session_state.log_messages.append({
-                    'time': datetime.now().strftime("%H:%M:%S"),
-                    'message': "Bot stopped!",
-                    'error': False
-                })
-
 # Tampilkan status dan statistik
 st.subheader("Status & Statistik")
 col1, col2 = st.columns(2)
@@ -194,6 +145,34 @@ with col1:
     st.markdown(f"**Bot Status:** {status}")
 with col2:
     st.markdown(f"**Total Pesan Diteruskan:** {st.session_state.total_forwarded}")
+
+# Tombol start/stop
+col1, col2 = st.columns(2)
+with col1:
+    if not st.session_state.running:
+        if st.button("Start Forwarding", use_container_width=True):
+            # Jalankan client di thread terpisah
+            thread = threading.Thread(target=start_client_thread)
+            thread.daemon = True
+            thread.start()
+            
+            st.session_state.running = True
+            st.session_state.log_messages.append({
+                'time': datetime.now().strftime("%H:%M:%S"),
+                'message': "Bot starting...",
+                'error': False
+            })
+with col2:
+    if st.session_state.running:
+        if st.button("Stop Forwarding", use_container_width=True):
+            # Hentikan client
+            stop_client_thread()
+            st.session_state.running = False
+            st.session_state.log_messages.append({
+                'time': datetime.now().strftime("%H:%M:%S"),
+                'message': "Bot stopped!",
+                'error': False
+            })
 
 # Tampilkan log aktivitas
 st.subheader("Log Aktivitas")
@@ -216,24 +195,16 @@ with st.expander("Cara Penggunaan"):
     st.markdown("""
     ### Cara Menggunakan Aplikasi Ini:
     
-    1. **Konfigurasi API**:
-       - Masukkan API ID dan API Hash dari Telegram
-       - Masukkan nomor telepon yang terdaftar di Telegram
-    
-    2. **Channel IDs**:
-       - Source Channel ID: ID channel sumber
-       - Target Channel ID: ID channel tujuan Anda
-    
-    3. **Menjalankan Bot**:
+    1. **Menjalankan Bot**:
        - Klik "Start Forwarding" untuk memulai
        - Pertama kali, Anda mungkin diminta memasukkan kode verifikasi
        - Klik "Stop Forwarding" untuk menghentikan bot
     
-    4. **Melihat Log**:
+    2. **Melihat Log**:
        - Lihat bagian "Log Aktivitas" untuk memantau proses forwarding
        - Log juga disimpan di file `telegram_forwarder.log`
     
-    5. **Troubleshooting**:
+    3. **Troubleshooting**:
        - Jika error, restart aplikasi
        - Pastikan akun Anda memiliki akses ke kedua channel
     """)
@@ -241,4 +212,4 @@ with st.expander("Cara Penggunaan"):
 # Auto-refresh halaman setiap 10 detik jika bot sedang berjalan
 if st.session_state.running:
     time.sleep(10)
-    st.rerun()  # Gunakan st.rerun() bukan st.experimental_rerun()
+    st.rerun()
