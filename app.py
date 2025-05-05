@@ -7,6 +7,7 @@ import re
 from datetime import datetime
 import logging
 from telethon import TelegramClient, events
+import aiohttp
 
 # Konfigurasi halaman Streamlit
 st.set_page_config(
@@ -30,8 +31,8 @@ logger = logging.getLogger(__name__)
 API_ID = 28690093
 API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
-SOURCE_CHANNEL_ID = -1002694678122
-TARGET_CHANNEL_ID = -1002535586416
+SOURCE_CHANNEL_ID = -1002626068320
+TARGET_CHANNEL_ID = -4628225750
 
 # File untuk menyimpan kode verifikasi
 VERIFICATION_CODE_FILE = "verification_code.txt"
@@ -108,6 +109,35 @@ def calculate_percentage_change(entry_price, target_price):
         logger.error(f"Error saat menghitung persentase: {entry_price}, {target_price}")
         return 0.0
 
+# Fungsi untuk mendapatkan harga cryptocurrency terkini
+async def get_current_price(coin_symbol):
+    try:
+        # Hapus suffix USDT jika ada
+        base_symbol = coin_symbol.replace('USDT', '')
+        
+        # Coba API Binance dulu
+        binance_url = f"https://api.binance.com/api/v3/ticker/price?symbol={coin_symbol}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(binance_url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if 'price' in data:
+                        return float(data['price'])
+                
+        # Fallback ke CoinGecko
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={base_symbol.lower()}&vs_currencies=usd"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if base_symbol.lower() in data:
+                        return data[base_symbol.lower()]['usd']
+                
+        return None
+    except Exception as e:
+        logger.error(f"Error mendapatkan harga: {str(e)}")
+        return None
+
 # Fungsi untuk membuat tabel persentase perubahan
 def create_percentage_table(coin_name, entry_price, targets, stop_losses):
     try:
@@ -133,6 +163,17 @@ def create_percentage_table(coin_name, entry_price, targets, stop_losses):
         logger.error(f"Error saat membuat tabel persentase: {str(e)}")
         return "Error saat membuat tabel persentase."
 
+# Fungsi untuk mendeteksi jenis pesan
+def detect_message_type(text):
+    if re.search(r'Daily\s+Results|每日結算統計|Results', text, re.IGNORECASE):
+        return "DAILY_RECAP"
+    elif re.search(r'Hitted\s+target|Reached\s+target|Target\s+[\d+]\s*[✅🟢]', text, re.IGNORECASE):
+        return "TARGET_HIT"
+    elif re.search(r'Hitted\s+stop\s+loss|Stop\s+loss\s+triggered|Stop\s+loss\s+[\d+]\s*[🛑🔴]', text, re.IGNORECASE):
+        return "STOP_LOSS_HIT"
+    else:
+        return "NEW_SIGNAL"
+
 # Fungsi untuk mengekstrak data dari pesan
 def extract_trading_data(message_text):
     try:
@@ -145,11 +186,26 @@ def extract_trading_data(message_text):
         stop_losses = []
         
         # Pattern untuk mengekstrak coin name (biasanya di baris awal)
-        first_line = lines[0].strip() if lines else ""
-        coin_pattern = r'^([A-Za-z0-9]+)[^A-Za-z0-9].*'
-        coin_match = re.match(coin_pattern, first_line)
-        if coin_match:
-            coin_name = coin_match.group(1)
+        for line in lines[:3]:  # Cek di 3 baris pertama
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Coba berbagai pola untuk coin name
+            coin_patterns = [
+                r'^([A-Za-z0-9]+)[^A-Za-z0-9]',  # Coin di awal baris
+                r'([A-Za-z0-9]+USDT)',  # Format seperti BTCUSDT
+                r'([A-Za-z0-9]+) NEW'   # Format seperti "COIN NEW"
+            ]
+            
+            for pattern in coin_patterns:
+                coin_match = re.search(pattern, line)
+                if coin_match:
+                    coin_name = coin_match.group(1)
+                    break
+            
+            if coin_name:
+                break
         
         # Iterasi per baris untuk ekstrak data
         for line in lines:
@@ -205,6 +261,104 @@ def extract_trading_data(message_text):
             'stop_losses': []
         }
 
+# Fungsi untuk mengekstrak data dari target hit/stop loss message
+def extract_hit_data(message_text):
+    data = {'coin': None, 'level': None, 'price': None}
+    
+    # Cari nama coin
+    coin_match = re.search(r'([A-Za-z0-9]+)(USDT|BTC|ETH|BNB)', message_text)
+    if coin_match:
+        data['coin'] = coin_match.group(0)
+    
+    # Cari level dan harga target
+    if "target" in message_text.lower():
+        target_match = re.search(r'Target\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
+        if target_match:
+            data['level'] = f"Target {target_match.group(1)}"
+            data['price'] = target_match.group(2)
+    
+    # Cari level dan harga stop loss
+    elif "stop loss" in message_text.lower():
+        sl_match = re.search(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
+        if sl_match:
+            data['level'] = f"Stop Loss {sl_match.group(1)}"
+            data['price'] = sl_match.group(2)
+    
+    return data
+
+# Fungsi untuk mengekstrak data dari daily recap
+def extract_daily_recap_data(text):
+    data = {
+        'date': None,
+        'hitted_targets': [],
+        'running': [],
+        'stop_losses': [],
+        'total_signals': 0,
+        'hitted_take_profits': 0,
+        'hitted_stop_losses': 0
+    }
+    
+    # Ekstrak tanggal
+    date_match = re.search(r'(\d{2}/\d{2}-\d{2}/\d{2})', text)
+    if date_match:
+        data['date'] = date_match.group(1)
+    
+    # Ekstrak target yang tercapai
+    for i in range(1, 5):  # Target 1-4
+        target_match = re.search(rf'Hitted\s+target\s+{i}:\s*(.*?)(?:\n|$)', text)
+        if target_match:
+            coins = [coin.strip() for coin in target_match.group(1).split(',')]
+            data['hitted_targets'].append({'level': i, 'coins': coins})
+    
+    # Ekstrak running signals
+    running_match = re.search(r'Running:\s*(.*?)(?:\n|$)', text)
+    if running_match:
+        data['running'] = [coin.strip() for coin in running_match.group(1).split(',')]
+    
+    # Ekstrak stop loss
+    sl_match = re.search(r'Hitted\s+stop\s+loss:\s*(.*?)(?:\n|$)', text)
+    if sl_match:
+        data['stop_losses'] = [coin.strip() for coin in sl_match.group(1).split(',')]
+    
+    # Ekstrak statistik
+    total_match = re.search(r'Total\s+Signals:\s*(\d+)', text)
+    if total_match:
+        data['total_signals'] = int(total_match.group(1))
+    
+    tp_match = re.search(r'Hitted\s+Take-Profits:\s*(\d+)', text)
+    if tp_match:
+        data['hitted_take_profits'] = int(tp_match.group(1))
+    
+    sl_count_match = re.search(r'Hitted\s+Stop-Losses:\s*(\d+)', text)
+    if sl_count_match:
+        data['hitted_stop_losses'] = int(sl_count_match.group(1))
+    
+    return data
+
+# Fungsi untuk membuat tabel win rate
+def create_win_rate_table(recap_data):
+    total_signals = recap_data['total_signals']
+    take_profits = recap_data['hitted_take_profits']
+    stop_losses = recap_data['hitted_stop_losses']
+    
+    if total_signals == 0:
+        win_rate = 0
+    else:
+        win_rate = (take_profits / total_signals) * 100
+    
+    table = "📊 Analisis Performa Trading 📊\n\n"
+    table += "Metrik                  Nilai       Persentase\n"
+    table += "--------------------------------------------\n"
+    table += f"Win Rate               {take_profits}/{total_signals}     {win_rate:.2f}%\n"
+    
+    if take_profits + stop_losses > 0:
+        profit_ratio = (take_profits / (take_profits + stop_losses)) * 100
+        table += f"Profit/Loss Ratio      {take_profits}/{stop_losses}     {profit_ratio:.2f}%\n"
+    
+    table += f"Sinyal Running         {len(recap_data['running'])}         {(len(recap_data['running'])/total_signals*100):.2f}%\n"
+    
+    return table
+
 # Fungsi untuk menjalankan client Telethon
 async def run_client():
     try:
@@ -217,8 +371,65 @@ async def run_client():
             try:
                 message = event.message
                 
-                # Proses pesan teks
-                if message.text:
+                # Jika tidak ada pesan, hanya kirim media
+                if not message.text:
+                    if message.media:
+                        await client.send_file(
+                            TARGET_CHANNEL_ID, 
+                            message.media,
+                            caption=f"🚀 VIP SIGNAL 🚀\n\n💹 @liananalyst"
+                        )
+                    return
+                
+                # Deteksi jenis pesan
+                message_type = detect_message_type(message.text)
+                
+                if message_type == "DAILY_RECAP":
+                    # Proses daily recap
+                    recap_data = extract_daily_recap_data(message.text)
+                    
+                    # Buat teks dengan win rate
+                    custom_text = f"📅 DAILY RECAP: {recap_data['date'] if recap_data['date'] else 'Hari Ini'} 📅\n\n"
+                    custom_text += message.text + "\n\n"
+                    custom_text += create_win_rate_table(recap_data)
+                    custom_text += "\n\n💹 @liananalyst"
+                    
+                    # Kirim pesan
+                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                    
+                elif message_type == "TARGET_HIT":
+                    # Format khusus untuk target tercapai
+                    hit_data = extract_hit_data(message.text)
+                    
+                    if hit_data['coin'] and hit_data['level'] and hit_data['price']:
+                        custom_text = f"✅ TARGET TERCAPAI: {hit_data['coin']} - {hit_data['level']} ({hit_data['price']}) ✅\n\n"
+                        custom_text += f"🎯 {hit_data['level']} ({hit_data['price']}) TERCAPAI!\n\n"
+                    else:
+                        # Jika ekstraksi gagal, kirim pesan asli dengan header standar
+                        custom_text = f"✅ TARGET TERCAPAI ✅\n\n"
+                        custom_text += message.text + "\n\n"
+                    
+                    custom_text += "💹 @liananalyst"
+                    
+                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                    
+                elif message_type == "STOP_LOSS_HIT":
+                    # Format khusus untuk stop loss terkena
+                    hit_data = extract_hit_data(message.text)
+                    
+                    if hit_data['coin'] and hit_data['level'] and hit_data['price']:
+                        custom_text = f"🔴 STOP LOSS TERKENA: {hit_data['coin']} - {hit_data['level']} ({hit_data['price']}) 🔴\n\n"
+                        custom_text += f"⚠️ {hit_data['level']} ({hit_data['price']}) TERKENA!\n\n"
+                    else:
+                        # Jika ekstraksi gagal, kirim pesan asli dengan header standar
+                        custom_text = f"🔴 STOP LOSS TERKENA 🔴\n\n"
+                        custom_text += message.text + "\n\n"
+                    
+                    custom_text += "💹 @liananalyst"
+                    
+                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                    
+                else:  # NEW_SIGNAL
                     # Ekstrak data trading
                     trading_data = extract_trading_data(message.text)
                     coin_name = trading_data['coin_name']
@@ -226,14 +437,25 @@ async def run_client():
                     targets = trading_data['targets']
                     stop_losses = trading_data['stop_losses']
                     
+                    # Jika tidak ada entry price tapi ada coin name, coba dapatkan harga terkini
+                    if coin_name and not entry_price and (targets or stop_losses):
+                        current_price = await get_current_price(coin_name)
+                        if current_price:
+                            entry_price = str(current_price)
+                            logger.info(f"Menggunakan harga terkini untuk {coin_name}: {entry_price}")
+                    
                     # Buat pesan kustom
-                    if coin_name and entry_price and targets and len(stop_losses) > 0:
+                    if coin_name and entry_price and (targets or stop_losses):
                         # Header pesan
                         custom_text = f"🚀 VIP SIGNAL: {coin_name} 🚀\n\n"
+                        
                         # Tambahkan pesan asli
                         custom_text += message.text + "\n\n"
-                        # Tambahkan tabel persentase
-                        custom_text += create_percentage_table(coin_name, entry_price, targets, stop_losses)
+                        
+                        # Tambahkan tabel persentase jika data cukup
+                        if targets or stop_losses:
+                            custom_text += create_percentage_table(coin_name, entry_price, targets, stop_losses)
+                        
                         # Footer
                         custom_text += "\n\n💹 @liananalyst"
                     else:
@@ -242,40 +464,13 @@ async def run_client():
                     
                     # Kirim pesan ke channel tujuan
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
-                # Proses pesan media
-                elif message.media:
-                    # Kirim media dengan caption kustom
-                    caption = "🚀 VIP SIGNAL 🚀"
-                    if message.text:
-                        # Ekstrak data trading jika ada teks
-                        trading_data = extract_trading_data(message.text)
-                        coin_name = trading_data['coin_name']
-                        entry_price = trading_data['entry_price']
-                        targets = trading_data['targets']
-                        stop_losses = trading_data['stop_losses']
-                        
-                        if coin_name and entry_price and targets and stop_losses:
-                            # Tambahkan coin name di caption
-                            caption = f"🚀 VIP SIGNAL: {coin_name} 🚀"
-                            # Kirim media dengan pesan asli dan tabel persentase
-                            caption += f"\n\n{message.text}\n\n"
-                            caption += create_percentage_table(coin_name, entry_price, targets, stop_losses)
-                        else:
-                            # Gunakan caption default dengan pesan asli
-                            caption += f"\n\n{message.text}"
-                    
-                    # Tambahkan footer
-                    caption += "\n\n💹 @liananalyst"
-                    
-                    # Kirim file
-                    await client.send_file(TARGET_CHANNEL_ID, message.media, caption=caption)
                 
                 # Log info pesan
                 message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media atau pesan tanpa teks"
                 log_msg = f"Pesan berhasil dikirim ulang: {message_preview}"
                 logger.info(log_msg)
                 write_log(log_msg)
-                
+                    
             except Exception as e:
                 error_msg = f"Error saat mengirim pesan: {str(e)}"
                 logger.error(error_msg)
@@ -407,9 +602,10 @@ with st.expander("Cara Penggunaan"):
        - Log juga disimpan di file `telegram_forwarder.log`
     
     4. **Format Pesan**:
-       - Pesan dari channel sumber akan diformat ulang dengan penambahan perhitungan persentase perubahan
-       - Data trading seperti nama coin, harga entry, target, dan stop loss akan diekstrak otomatis
-       - Persentase perubahan harga dihitung dan ditampilkan dalam tabel
+       - Pesan trading baru: Ditambahkan perhitungan persentase perubahan
+       - Target tercapai: Format dengan sorotan aset dan target di judul
+       - Stop loss: Format dengan sorotan aset dan stop loss di judul
+       - Daily recap: Ditambahkan perhitungan win rate dan statistik
     
     5. **Troubleshooting**:
        - Jika error, restart aplikasi
