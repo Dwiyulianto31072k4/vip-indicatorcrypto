@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 API_ID = 28690093
 API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
-SOURCE_CHANNEL_ID = -1002694678122
-TARGET_CHANNEL_ID = -1002535586416
+SOURCE_CHANNEL_ID = -1002626068320
+TARGET_CHANNEL_ID = -4628225750
 
 # File untuk menyimpan kode verifikasi
 VERIFICATION_CODE_FILE = "verification_code.txt"
@@ -103,7 +103,19 @@ def calculate_percentage_change(entry_price, target_price):
     try:
         entry = float(entry_price)
         target = float(target_price)
+        
+        # Validasi untuk mencegah pembagian dengan nol atau nilai yang terlalu kecil
+        if entry < 0.0001:
+            logger.warning(f"Entry price terlalu kecil: {entry}, menggunakan default")
+            return 0.0
+            
         percentage = ((target - entry) / entry) * 100
+        
+        # Batasi persentase maksimum ke nilai yang masuk akal
+        if abs(percentage) > 1000:
+            logger.warning(f"Persentase terlalu besar: {percentage}, dibatasi ke ±1000%")
+            percentage = 1000.0 if percentage > 0 else -1000.0
+            
         return percentage
     except (ValueError, ZeroDivisionError):
         logger.error(f"Error saat menghitung persentase: {entry_price}, {target_price}")
@@ -402,7 +414,7 @@ async def run_client():
                     hit_data = extract_hit_data(message.text)
                     
                     if hit_data['coin'] and hit_data['level'] and hit_data['price']:
-                        custom_text = f"✅ TARGET TERCAPAI: {hit_data['coin']} - {hit_data['level']} ({hit_data['price']}) ✅\n\n"
+                        custom_text = f"✅ TARGET TERCAPAI: {hit_data['coin']} ✅\n\n"
                         custom_text += f"🎯 {hit_data['level']} ({hit_data['price']}) TERCAPAI!\n\n"
                     else:
                         # Jika ekstraksi gagal, kirim pesan asli dengan header standar
@@ -418,7 +430,7 @@ async def run_client():
                     hit_data = extract_hit_data(message.text)
                     
                     if hit_data['coin'] and hit_data['level'] and hit_data['price']:
-                        custom_text = f"🔴 STOP LOSS TERKENA: {hit_data['coin']} - {hit_data['level']} ({hit_data['price']}) 🔴\n\n"
+                        custom_text = f"🔴 STOP LOSS TERKENA: {hit_data['coin']} 🔴\n\n"
                         custom_text += f"⚠️ {hit_data['level']} ({hit_data['price']}) TERKENA!\n\n"
                     else:
                         # Jika ekstraksi gagal, kirim pesan asli dengan header standar
@@ -603,8 +615,8 @@ with st.expander("Cara Penggunaan"):
     
     4. **Format Pesan**:
        - Pesan trading baru: Ditambahkan perhitungan persentase perubahan
-       - Target tercapai: Format dengan sorotan aset dan target di judul
-       - Stop loss: Format dengan sorotan aset dan stop loss di judul
+       - Target tercapai: Format dengan sorotan aset
+       - Stop loss: Format dengan sorotan aset
        - Daily recap: Ditambahkan perhitungan win rate dan statistik
     
     5. **Troubleshooting**:
