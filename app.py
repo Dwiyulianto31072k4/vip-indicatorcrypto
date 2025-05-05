@@ -43,15 +43,14 @@ LOG_FILE = "bot_logs.txt"
 # Set restart interval (in seconds)
 RESTART_INTERVAL = 12 * 60 * 60  # 12 hours
 
-# Session state initialization
-if 'running' not in st.session_state:
+# Initialize session state variables
+if 'initialized' not in st.session_state:
+    st.session_state['initialized'] = True
     st.session_state['running'] = False
-if 'total_forwarded' not in st.session_state:
     st.session_state['total_forwarded'] = 0
-if 'log_messages' not in st.session_state:
     st.session_state['log_messages'] = []
-if 'restart_required' not in st.session_state:
     st.session_state['restart_required'] = False
+    st.session_state['code_input'] = ""
 
 # Function to save log to file
 def write_log(message, is_error=False):
@@ -117,7 +116,8 @@ async def scheduled_restart(restart_interval=RESTART_INTERVAL):
         write_log(f"Scheduled restart after {restart_interval//3600} hours of operation")
         
         # Set flag for restart
-        st.session_state['restart_required'] = True
+        if 'restart_required' in st.session_state:
+            st.session_state['restart_required'] = True
     except Exception as e:
         logger.error(f"Error in scheduled restart: {str(e)}")
 
@@ -428,6 +428,15 @@ def create_win_rate_table(recap_data):
 
 # Improved function to run Telethon client with better error handling
 async def run_client():
+    # Check if running state is available, if not exit cleanly
+    if 'running' not in st.session_state:
+        logger.error("Session state 'running' not initialized")
+        return
+        
+    if not st.session_state['running']:
+        logger.info("Bot is not running, exiting cleanly")
+        return
+        
     try:
         # Handle session file
         session_name = 'telegram_forwarder_session'
@@ -629,7 +638,113 @@ async def run_client():
         async def health_check():
             while True:
                 try:
+                    # First check if we should exit
+                    if 'running' not in st.session_state or not st.session_state['running']:
+                        logger.info("Restart required, exiting main loop")
+                await client.disconnect()
+                break
+                
+            # Sleep briefly to prevent CPU hogging    
+            await asyncio.sleep(1)
+                
+        # Run until disconnected or stopped externally
+        try:
+            await client.run_until_disconnected()
+        except Exception as e:
+            error_msg = f"Client disconnected with error: {str(e)}"
+            logger.error(error_msg)
+            write_log(error_msg, True)
+            raise  # Re-raise to trigger restart
+        
+    except Exception as e:
+        error_msg = f"Error running client: {str(e)}"
+        logger.error(error_msg)
+        write_log(error_msg, True)
+        
+        # If specific errors, delete session file to force clean reconnection
+        if "Constructor ID" in str(e) or "database is locked" in str(e) or "misusing the session" in str(e):
+            try:
+                session_file = 'telegram_forwarder_session.session'
+                if os.path.exists(session_file):
+                    os.remove(session_file)
+                    write_log("Removed corrupted session file", True)
+            except Exception as se:
+                write_log(f"Failed to remove session file: {str(se)}", True)
+        
+        # Set flag for restart if session state is available
+        if 'restart_required' in st.session_state:
+            st.session_state['restart_required'] = True
+
+# Function to run client in separate thread with better error handling and restart
+def start_client_thread():
+    try:
+        write_log("Starting client in separate thread...")
+        
+        # Create new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Implement restart with backoff
+        max_attempts = 5
+        current_attempt = 0
+        
+        # Get running state safely
+        running = False
+        try:
+            if 'running' in st.session_state:
+                running = st.session_state['running']
+        except Exception as e:
+            write_log(f"Error accessing session state: {str(e)}", True)
+            return
+            
+        while current_attempt < max_attempts and running:
+            try:
+                loop.run_until_complete(run_client())
+                break  # If run_client completes normally, exit loop
+            except Exception as e:
+                current_attempt += 1
+                # Calculate backoff time with exponential increase but max 60 seconds
+                backoff_time = min(60, 5 * (2 ** (current_attempt - 1)))
+                
+                error_msg = f"Client failed (attempt {current_attempt}/{max_attempts}): {str(e)}"
+                logger.error(error_msg)
+                write_log(error_msg, True)
+                
+                # Only retry if bot is still marked as running
+                try:
+                    if 'running' in st.session_state and st.session_state['running'] and current_attempt < max_attempts:
+                        write_log(f"Will retry in {backoff_time} seconds...")
+                        time.sleep(backoff_time)
+                        
+                        # If session error, try to delete session file before retry
+                        if "database is locked" in str(e) or "Constructor ID" in str(e) or "misusing the session" in str(e):
+                            try:
+                                session_file = 'telegram_forwarder_session.session'
+                                if os.path.exists(session_file):
+                                    os.remove(session_file)
+                                    write_log("Deleted corrupted session file before retry")
+                            except Exception as se:
+                                write_log(f"Failed to delete session file: {str(se)}", True)
+                    else:
+                        write_log("Max retry attempts reached or bot stopped")
+                        break
+                except Exception as se:
+                    write_log(f"Error checking session state: {str(se)}", True)
+                    break
+    except Exception as e:
+        error_msg = f"Critical error in thread: {str(e)}"
+        logger.error(error_msg)
+        write_log(error_msg, True)
+        # Try to set running to False
+        try:
+            if 'running' in st.session_state:
+                st.session_state['running'] = False
+        except:
+            pass  # Ignore if we can't update session stateBot stopped, exiting health check loop")
+                        return
+                    
                     await asyncio.sleep(300)  # Check every 5 minutes
+                    
                     if not client.is_connected():
                         logger.warning("Client disconnected, attempting to reconnect...")
                         write_log("Client disconnected, attempting to reconnect...")
@@ -680,237 +795,14 @@ async def run_client():
         logger.info(log_msg)
         write_log(log_msg)
         
-        # Run until disconnected
-        try:
-            await client.run_until_disconnected()
-        except Exception as e:
-            error_msg = f"Client disconnected with error: {str(e)}"
-            logger.error(error_msg)
-            write_log(error_msg, True)
-            raise  # Re-raise to trigger restart
-        
-    except Exception as e:
-        error_msg = f"Error running client: {str(e)}"
-        logger.error(error_msg)
-        write_log(error_msg, True)
-        
-        # If specific errors, delete session file to force clean reconnection
-        if "Constructor ID" in str(e) or "database is locked" in str(e) or "misusing the session" in str(e):
-            try:
-                session_file = 'telegram_forwarder_session.session'
-                if os.path.exists(session_file):
-                    os.remove(session_file)
-                    write_log("Removed corrupted session file", True)
-            except Exception as se:
-                write_log(f"Failed to remove session file: {str(se)}", True)
-        
-        # Set flag for restart
-        st.session_state['restart_required'] = True
-        
-        # Re-raise exception to allow restart mechanism to work
-        raise
-
-# Function to run client in separate thread with better error handling and restart
-def start_client_thread():
-    try:
-        write_log("Starting client in separate thread...")
-        
-        # Create new event loop for this thread
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        loop = asyncio.get_event_loop()
-        
-        # Implement restart with backoff
-        # Implement restart with backoff
-        max_attempts = 5
-        current_attempt = 0
-        
-        while current_attempt < max_attempts and st.session_state['running']:
-            try:
-                loop.run_until_complete(run_client())
-                break  # If run_client completes normally, exit loop
-            except Exception as e:
-                current_attempt += 1
-                # Calculate backoff time with exponential increase but max 60 seconds
-                backoff_time = min(60, 5 * (2 ** (current_attempt - 1)))
+        # Main loop - keep checking if we should continue running
+        while True:
+            # Check if app is still running
+            if 'running' not in st.session_state or not st.session_state['running']:
+                logger.info("Bot stopped, exiting main loop")
+                await client.disconnect()
+                break
                 
-                error_msg = f"Client failed (attempt {current_attempt}/{max_attempts}): {str(e)}"
-                logger.error(error_msg)
-                write_log(error_msg, True)
-                
-                # Only retry if bot is still marked as running
-                if current_attempt < max_attempts and st.session_state['running']:
-                    write_log(f"Akan mencoba ulang dalam {backoff_time} detik...")
-                    time.sleep(backoff_time)
-                    
-                    # If session error, try to delete session file before retry
-                    if "database is locked" in str(e) or "Constructor ID" in str(e) or "misusing the session" in str(e):
-                        try:
-                            session_file = 'telegram_forwarder_session.session'
-                            if os.path.exists(session_file):
-                                os.remove(session_file)
-                                write_log("Menghapus file sesi yang rusak sebelum mencoba ulang")
-                        except Exception as se:
-                            write_log(f"Gagal menghapus file sesi: {str(se)}", True)
-                else:
-                    write_log("Batas maksimum percobaan tercapai atau bot dihentikan")
-                    st.session_state['running'] = False
-                    break
-    except Exception as e:
-        error_msg = f"Error kritis dalam thread: {str(e)}"
-        logger.error(error_msg)
-        write_log(error_msg, True)
-        st.session_state['running'] = False
-
-# Function to save verification code
-def save_verification_code():
-    if st.session_state.code_input:
-        try:
-            with open(VERIFICATION_CODE_FILE, "w") as f:
-                f.write(st.session_state.code_input)
-            st.success("Kode verifikasi terkirim!")
-        except Exception as e:
-            st.error(f"Gagal menyimpan kode verifikasi: {str(e)}")
-
-# Function to restart bot after error
-def restart_bot():
-    write_log("Memulai ulang bot setelah error...")
-    # Reset flag
-    st.session_state['restart_required'] = False
-    
-    # Check if bot is running
-    if st.session_state['running']:
-        # Set to not running temporarily
-        st.session_state['running'] = False
-        time.sleep(2)
-    
-    # Check and delete session file if exists
-    try:
-        session_file = 'telegram_forwarder_session.session'
-        if os.path.exists(session_file):
-            os.remove(session_file)
-            write_log("Menghapus file sesi untuk restart bersih")
-    except Exception as e:
-        write_log(f"Gagal menghapus file sesi: {str(e)}", True)
-    
-    # Start bot again
-    thread = threading.Thread(target=start_client_thread, daemon=True)
-    thread.start()
-    
-    # Mark as running
-    st.session_state['running'] = True
-    write_log("Bot berhasil dimulai ulang!")
-
-# Streamlit UI
-st.title("Telegram Channel Forwarder")
-st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel target Anda.")
-
-# Column for verification code
-if st.session_state['running']:
-    st.text_input("Masukkan Kode Verifikasi dari Telegram (jika diminta):", 
-                  key="code_input", 
-                  on_change=save_verification_code)
-
-# Display status and statistics
-st.subheader("Status & Statistik")
-col1, col2 = st.columns(2)
-with col1:
-    status = "🟢 **Berjalan**" if st.session_state['running'] else "🔴 **Berhenti**"
-    st.markdown(f"**Status Bot:** {status}")
-with col2:
-    # Update total forwarded from log
-    forwarded_count = 0
-    for log in read_logs():
-        if "Message successfully forwarded" in log['message']:
-            forwarded_count += 1
-    st.session_state['total_forwarded'] = forwarded_count
-    st.markdown(f"**Total Pesan Terkirim:** {st.session_state['total_forwarded']}")
-
-# Start/stop buttons
-col1, col2 = st.columns(2)
-with col1:
-    if not st.session_state['running']:
-        if st.button("Mulai Bot", use_container_width=True):
-            # Create log file if it doesn't exist
-            if not os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "w") as f:
-                    f.write("")
-            
-            # Run client in separate thread
-            thread = threading.Thread(target=start_client_thread, daemon=True)
-            thread.start()
-            
-            st.session_state['running'] = True
-            write_log("Bot sedang memulai...")
-            st.rerun()
-with col2:
-    if st.session_state['running']:
-        if st.button("Hentikan Bot", use_container_width=True):
-            # Stop client - no direct way to stop thread
-            # Just mark as not running
-            st.session_state['running'] = False
-            write_log("Bot dihentikan!")
-            st.rerun()
-
-# Add restart button
-if st.session_state['running']:
-    if st.button("Restart Bot", use_container_width=True):
-        restart_bot()
-        st.rerun()
-
-# Display activity log
-st.subheader("Log Aktivitas")
-log_container = st.container()
-with log_container:
-    # Read logs from file
-    logs = read_logs()
-    # Display last 10 logs
-    if logs:
-        for log in reversed(logs[-10:]):
-            timestamp = log.get('time', '')
-            message = log.get('message', '')
-            is_error = log.get('error', False)
-            
-            if is_error:
-                st.error(f"{timestamp} - {message}")
-            else:
-                st.info(f"{timestamp} - {message}")
-
-# Add usage instructions
-with st.expander("Cara Penggunaan"):
-    st.markdown("""
-    ### Cara Menggunakan Aplikasi Ini:
-    
-    1. **Menjalankan Bot**:
-       - Klik "Mulai Bot" untuk memulai
-       - Pertama kali, Anda mungkin diminta memasukkan kode verifikasi
-       - Klik "Hentikan Bot" untuk menghentikan bot
-       - Klik "Restart Bot" untuk memulai ulang bot jika terjadi masalah
-    
-    2. **Kode Verifikasi**:
-       - Saat pertama dijalankan, Telegram akan mengirimkan kode verifikasi ke nomor telepon Anda
-       - Masukkan kode tersebut di kolom "Kode Verifikasi" yang muncul
-    
-    3. **Fitur Otomatis**:
-       - Bot akan otomatis restart setiap 12 jam untuk menjaga stabilitas
-       - Bot akan otomatis mendeteksi dan mengatasi masalah koneksi
-       - Bot akan menangani batasan rate limit Telegram secara otomatis
-    
-    4. **Format Pesan**:
-       - Sinyal trading baru: "VIP SIGNAL" dengan kalkulasi persentase perubahan harga
-       - Update target tercapai: "SIGNAL UPDATE" dengan format sederhana
-       - Update stop loss terpicu: "SIGNAL UPDATE" dengan format sederhana
-       - Rekap harian: Ditambahkan kalkulasi win rate dan statistik
-    
-    5. **Pemecahan Masalah**:
-       - Jika terjadi error, bot akan mencoba restart otomatis
-       - Pastikan akun Anda memiliki akses ke kedua channel
-       - Jika bot terus mengalami masalah, coba restart manual
-    """)
-
-# Check if restart is required
-if st.session_state.get('restart_required', False):
-    restart_bot()
-
-# Auto-refresh page every 5 seconds
-time.sleep(5)
-st.rerun()
+            # Check for restart required
+            if 'restart_required' in st.session_state and st.session_state['restart_required']:
+                logger.info("
