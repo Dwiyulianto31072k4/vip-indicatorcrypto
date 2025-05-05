@@ -26,13 +26,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Ambil kredensial dari secrets Streamlit
-API_ID = st.secrets["API_ID"]
-API_HASH = st.secrets["API_HASH"]
-PHONE_NUMBER = st.secrets["PHONE_NUMBER"]
-SOURCE_CHANNEL_ID = st.secrets["SOURCE_CHANNEL_ID"]
-TARGET_CHANNEL_ID = st.secrets["TARGET_CHANNEL_ID"]
-
 # Inisialisasi session state
 if 'running' not in st.session_state:
     st.session_state.running = False
@@ -45,17 +38,24 @@ if 'total_forwarded' not in st.session_state:
 
 # Fungsi untuk menjalankan client Telethon
 async def run_client():
-    # Gunakan kredensial dari secrets langsung
-    client = TelegramClient('telegram_forwarder_session', API_ID, API_HASH)
+    # Ambil kredensial dari secrets
+    api_id = st.secrets["API_ID"]
+    api_hash = st.secrets["API_HASH"]
+    phone = st.secrets["PHONE_NUMBER"]
+    source_id = st.secrets["SOURCE_CHANNEL_ID"]
+    target_id = st.secrets["TARGET_CHANNEL_ID"]
     
-    @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
+    # Buat client
+    client = TelegramClient('telegram_forwarder_session', api_id, api_hash)
+    
+    @client.on(events.NewMessage(chats=source_id))
     async def handler(event):
         try:
             # Forward pesan ke channel tujuan
             await client(ForwardMessagesRequest(
-                from_peer=SOURCE_CHANNEL_ID,
+                from_peer=source_id,
                 id=[event.message.id],
-                to_peer=TARGET_CHANNEL_ID,
+                to_peer=target_id,
                 with_my_score=True,
             ))
             
@@ -84,11 +84,11 @@ async def run_client():
             })
     
     # Jalankan client
-    await client.start(PHONE_NUMBER)
-    logger.info(f"Bot telah aktif! Memantau channel ID: {SOURCE_CHANNEL_ID}")
+    await client.start(phone)
+    logger.info(f"Bot telah aktif! Memantau channel ID: {source_id}")
     st.session_state.log_messages.append({
         'time': datetime.now().strftime("%H:%M:%S"),
-        'message': f"Bot berhasil diaktifkan. Memantau channel: {SOURCE_CHANNEL_ID}",
+        'message': f"Bot berhasil diaktifkan. Memantau channel: {source_id}",
         'error': False
     })
     
@@ -127,6 +127,12 @@ with col1:
     st.markdown(f"**Bot Status:** {status}")
 with col2:
     st.markdown(f"**Total Pesan Diteruskan:** {st.session_state.total_forwarded}")
+
+# Tampilkan area untuk memasukkan kode verifikasi jika aplikasi sedang berjalan
+if st.session_state.running:
+    verification_code = st.text_input("Kode Verifikasi (jika diminta)", "")
+    if verification_code:
+        st.info("Kode verifikasi telah dimasukkan. Jika kode valid, bot akan segera berjalan.")
 
 # Tombol start/stop
 col1, col2 = st.columns(2)
@@ -182,11 +188,15 @@ with st.expander("Cara Penggunaan"):
        - Pertama kali, Anda mungkin diminta memasukkan kode verifikasi
        - Klik "Stop Forwarding" untuk menghentikan bot
     
-    2. **Melihat Log**:
+    2. **Kode Verifikasi**:
+       - Saat pertama kali dijalankan, Telegram akan mengirimkan kode verifikasi ke nomor telepon Anda
+       - Masukkan kode tersebut pada kolom "Kode Verifikasi" yang muncul
+    
+    3. **Melihat Log**:
        - Lihat bagian "Log Aktivitas" untuk memantau proses forwarding
        - Log juga disimpan di file `telegram_forwarder.log`
     
-    3. **Troubleshooting**:
+    4. **Troubleshooting**:
        - Jika error, restart aplikasi
        - Pastikan akun Anda memiliki akses ke kedua channel
     """)
