@@ -26,6 +26,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Ambil kredensial dari secrets Streamlit
+API_ID = st.secrets["API_ID"]
+API_HASH = st.secrets["API_HASH"]
+PHONE_NUMBER = st.secrets["PHONE_NUMBER"]
+SOURCE_CHANNEL_ID = st.secrets["SOURCE_CHANNEL_ID"]
+TARGET_CHANNEL_ID = st.secrets["TARGET_CHANNEL_ID"]
+
 # Inisialisasi session state
 if 'running' not in st.session_state:
     st.session_state.running = False
@@ -36,38 +43,19 @@ if 'log_messages' not in st.session_state:
 if 'total_forwarded' not in st.session_state:
     st.session_state.total_forwarded = 0
 
-# Kredensial dan konfigurasi dari secrets
-API_ID = 28690093
-API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
-PHONE_NUMBER = "+6285161054271"
-SOURCE_CHANNEL_ID = -1002051092635
-TARGET_CHANNEL_ID = -4628225750
-
-# Inisialisasi session state untuk kredensial
-if 'api_id' not in st.session_state:
-    st.session_state.api_id = API_ID
-if 'api_hash' not in st.session_state:
-    st.session_state.api_hash = API_HASH
-if 'phone' not in st.session_state:
-    st.session_state.phone = PHONE_NUMBER
-if 'source_id' not in st.session_state:
-    st.session_state.source_id = SOURCE_CHANNEL_ID
-if 'target_id' not in st.session_state:
-    st.session_state.target_id = TARGET_CHANNEL_ID
-
 # Fungsi untuk menjalankan client Telethon
-async def run_client(api_id, api_hash, phone, source_id, target_id):
-    # Buat client jika belum ada
-    client = TelegramClient('telegram_forwarder_session', api_id, api_hash)
+async def run_client():
+    # Gunakan kredensial dari secrets langsung
+    client = TelegramClient('telegram_forwarder_session', API_ID, API_HASH)
     
-    @client.on(events.NewMessage(chats=source_id))
+    @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
     async def handler(event):
         try:
             # Forward pesan ke channel tujuan
             await client(ForwardMessagesRequest(
-                from_peer=source_id,
+                from_peer=SOURCE_CHANNEL_ID,
                 id=[event.message.id],
-                to_peer=target_id,
+                to_peer=TARGET_CHANNEL_ID,
                 with_my_score=True,
             ))
             
@@ -96,11 +84,11 @@ async def run_client(api_id, api_hash, phone, source_id, target_id):
             })
     
     # Jalankan client
-    await client.start(phone)
-    logger.info(f"Bot telah aktif! Memantau channel ID: {source_id}")
+    await client.start(PHONE_NUMBER)
+    logger.info(f"Bot telah aktif! Memantau channel ID: {SOURCE_CHANNEL_ID}")
     st.session_state.log_messages.append({
         'time': datetime.now().strftime("%H:%M:%S"),
-        'message': f"Bot berhasil diaktifkan. Memantau channel: {source_id}",
+        'message': f"Bot berhasil diaktifkan. Memantau channel: {SOURCE_CHANNEL_ID}",
         'error': False
     })
     
@@ -114,13 +102,7 @@ async def run_client(api_id, api_hash, phone, source_id, target_id):
 def start_client_thread():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_client(
-        st.session_state.api_id,
-        st.session_state.api_hash,
-        st.session_state.phone,
-        st.session_state.source_id,
-        st.session_state.target_id
-    ))
+    loop.run_until_complete(run_client())
 
 # Fungsi untuk menghentikan client
 async def stop_client():
