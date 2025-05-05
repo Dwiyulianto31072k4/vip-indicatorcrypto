@@ -1,12 +1,11 @@
 import streamlit as st
 import asyncio
 import threading
+import time
+from datetime import datetime
+import logging
 from telethon import TelegramClient, events
 from telethon.tl.functions.messages import ForwardMessagesRequest
-import logging
-import time
-import os
-from datetime import datetime
 
 # Konfigurasi halaman Streamlit
 st.set_page_config(
@@ -33,37 +32,35 @@ PHONE_NUMBER = "+6285161054271"
 SOURCE_CHANNEL_ID = -1002051092635
 TARGET_CHANNEL_ID = -4628225750
 
-# Inisialisasi session state - VITAL
-if 'running' not in st.session_state:
+# Variabel global untuk manajemen state
+if 'initialized' not in st.session_state:
     st.session_state['running'] = False
-if 'client' not in st.session_state:
     st.session_state['client'] = None
-if 'log_messages' not in st.session_state:
     st.session_state['log_messages'] = []
-if 'total_forwarded' not in st.session_state:
     st.session_state['total_forwarded'] = 0
-
-# Variabel global untuk kode verifikasi
-code_to_check = None
+    st.session_state['initialized'] = True
+    st.session_state['verification_code'] = None
 
 # Fungsi untuk menjalankan client Telethon
 async def run_client():
-    global code_to_check
     try:
         # Buat client
         client = TelegramClient('telegram_forwarder_session', API_ID, API_HASH)
         
         # Fungsi untuk mendapatkan kode verifikasi
         def code_callback():
-            # Tunggu sampai kode dimasukkan
-            while code_to_check is None:
+            logger.info("Menunggu kode verifikasi...")
+            st.warning("Telegram meminta kode verifikasi - Masukkan kode di kolom yang telah disediakan")
+            
+            # Tunggu kode verifikasi sampai dimasukkan
+            while st.session_state['verification_code'] is None:
                 time.sleep(1)
             
-            # Ambil kode dan reset
-            code = code_to_check
-            code_to_check = None
+            code = st.session_state['verification_code']
+            st.session_state['verification_code'] = None
             return code
         
+        # Event handler untuk pesan baru
         @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
         async def handler(event):
             try:
@@ -102,9 +99,11 @@ async def run_client():
         # Jalankan client
         await client.start(PHONE_NUMBER, code_callback=code_callback)
         logger.info(f"Bot telah aktif! Memantau channel ID: {SOURCE_CHANNEL_ID}")
+        
+        log_msg = f"Bot berhasil diaktifkan. Memantau channel: {SOURCE_CHANNEL_ID}"
         st.session_state['log_messages'].append({
             'time': datetime.now().strftime("%H:%M:%S"),
-            'message': f"Bot berhasil diaktifkan. Memantau channel: {SOURCE_CHANNEL_ID}",
+            'message': log_msg,
             'error': False
         })
         
@@ -126,35 +125,32 @@ async def run_client():
 
 # Fungsi untuk menjalankan client dalam thread terpisah
 def start_client_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
     try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         loop.run_until_complete(run_client())
     except Exception as e:
-        logger.error(f"Error dalam client thread: {str(e)}")
+        logger.error(f"Error dalam thread: {str(e)}")
     finally:
-        loop.close()
+        if loop and loop.is_running():
+            loop.close()
 
 # Fungsi untuk menghentikan client
-async def stop_client():
-    if st.session_state['client']:
-        await st.session_state['client'].disconnect()
-        st.session_state['client'] = None
-
-def stop_client_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+def stop_client():
     try:
-        loop.run_until_complete(stop_client())
-    finally:
-        loop.close()
-
-# Fungsi untuk meng-handle input kode verifikasi
-def handle_code_input():
-    global code_to_check
-    if st.session_state.code_input:
-        code_to_check = st.session_state.code_input
-        st.success("Kode verifikasi dimasukkan!")
+        if st.session_state['client']:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            async def disconnect_client():
+                await st.session_state['client'].disconnect()
+                st.session_state['client'] = None
+                
+            loop.run_until_complete(disconnect_client())
+            loop.close()
+    except Exception as e:
+        logger.error(f"Error saat menghentikan client: {str(e)}")
+        st.session_state['client'] = None
 
 # UI Streamlit
 st.title("Telegram Channel Forwarder")
@@ -162,7 +158,10 @@ st.markdown("Aplikasi untuk meneruskan pesan dari channel sumber ke channel tuju
 
 # Tampilkan area untuk memasukkan kode verifikasi
 if st.session_state['running']:
-    st.text_input("Masukkan Kode Verifikasi dari Telegram (jika diminta):", key="code_input", on_change=handle_code_input)
+    verification_code = st.text_input("Masukkan Kode Verifikasi dari Telegram (jika diminta):", key="code_input")
+    if verification_code:
+        st.session_state['verification_code'] = verification_code
+        st.success("Kode verifikasi dimasukkan!")
 
 # Tampilkan status dan statistik
 st.subheader("Status & Statistik")
@@ -179,8 +178,7 @@ with col1:
     if not st.session_state['running']:
         if st.button("Start Forwarding", use_container_width=True):
             # Jalankan client di thread terpisah
-            thread = threading.Thread(target=start_client_thread)
-            thread.daemon = True
+            thread = threading.Thread(target=start_client_thread, daemon=True)
             thread.start()
             
             st.session_state['running'] = True
@@ -189,17 +187,19 @@ with col1:
                 'message': "Bot starting...",
                 'error': False
             })
+            st.rerun()
 with col2:
     if st.session_state['running']:
         if st.button("Stop Forwarding", use_container_width=True):
             # Hentikan client
-            stop_client_thread()
+            stop_client()
             st.session_state['running'] = False
             st.session_state['log_messages'].append({
                 'time': datetime.now().strftime("%H:%M:%S"),
                 'message': "Bot stopped!",
                 'error': False
             })
+            st.rerun()
 
 # Tampilkan log aktivitas
 st.subheader("Log Aktivitas")
@@ -242,5 +242,5 @@ with st.expander("Cara Penggunaan"):
 
 # Auto-refresh halaman setiap 10 detik jika bot sedang berjalan
 if st.session_state['running']:
-    time.sleep(10)
+    time.sleep(5)
     st.rerun()
