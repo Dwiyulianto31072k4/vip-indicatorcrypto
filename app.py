@@ -421,7 +421,7 @@ async def run_client():
                         await client.send_file(
                             TARGET_CHANNEL_ID, 
                             message.media,
-                            caption=f"🚀 VIP SIGNAL 🚀\n\nhttps://t.me/+4xrX56bvDhRkODA1"
+                            caption=f"🚀 VIP SIGNAL 🚀\n\n"
                         )
                     return
                 
@@ -440,7 +440,7 @@ async def run_client():
                     custom_text = f"📅 DAILY RECAP: {recap_data['date'] if recap_data['date'] else 'Today'} 📅\n\n"
                     custom_text += message.text + "\n\n"
                     custom_text += create_win_rate_table(recap_data)
-                    custom_text += "\n\nhttps://t.me/+4xrX56bvDhRkODA1"
+                    custom_text += "\n\n"
                     
                     # Send message
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
@@ -458,7 +458,7 @@ async def run_client():
                         custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
                         custom_text += message.text + "\n\n"
                     
-                    custom_text += "https://t.me/+4xrX56bvDhRkODA1"
+                    custom_text += ""
                     
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
@@ -475,7 +475,7 @@ async def run_client():
                         custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
                         custom_text += message.text + "\n\n"
                     
-                    custom_text += "https://t.me/+4xrX56bvDhRkODA1"
+                    custom_text += ""
                     
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
@@ -507,10 +507,10 @@ async def run_client():
                             custom_text += create_percentage_table(coin_name, entry_price, targets, stop_losses)
                         
                         # Footer
-                        custom_text += "\n\nhttps://t.me/+4xrX56bvDhRkODA1"
+                        custom_text += "\n\n"
                     else:
                         # Default format if data is incomplete
-                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}\n\nhttps://t.me/+4xrX56bvDhRkODA1"
+                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}\n\n "
                     
                     # Send message to target channel
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
