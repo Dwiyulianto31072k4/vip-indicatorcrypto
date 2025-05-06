@@ -181,7 +181,12 @@ def detect_message_type(text):
     if re.search(r'Daily\s+Results|每日結算統計|Results', text, re.IGNORECASE):
         return "DAILY_RECAP"
     
-    # Check for Target Hit - IMPROVED to catch more patterns including checkmarks
+    # Check if this is a multi-target hit message (contains multiple targets with checkmarks)
+    target_checkmarks = re.findall(r'Target\s+\d+.*?[✅🟢]', text, re.IGNORECASE)
+    if len(target_checkmarks) > 1:
+        return "MULTI_TARGET_HIT"
+    
+    # Check for a single Target Hit
     if (re.search(r'Hitted\s+target|Reached\s+target', text, re.IGNORECASE) or 
         re.search(r'Target\s+\d+.*?[✅🟢]', text, re.IGNORECASE) or
         re.search(r'Target\s+\d+\s*[:]\s*\d+.*?[✅🟢]', text, re.IGNORECASE)):
@@ -293,40 +298,31 @@ def extract_trading_data(message_text):
             'stop_losses': []
         }
 
-# Function to extract data from target hit/stop loss message
+# IMPROVED: Function to extract data from target hit/stop loss message
 def extract_hit_data(message_text):
-    data = {'coin': None, 'level': None, 'price': None}
+    # For multi-target hits, extract coin and all targets
+    data = {'coin': None, 'targets': [], 'stop_losses': []}
     
     # Find coin name
     coin_match = re.search(r'([A-Za-z0-9]+)(USDT|BTC|ETH|BNB)', message_text)
     if coin_match:
         data['coin'] = coin_match.group(0)
     
-    # Find target level and price
-    target_match = None
-    if "target" in message_text.lower():
-        target_match = re.search(r'Target\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
+    # Find all target levels and prices
+    target_matches = re.findall(r'Target\s+(\d+)[:\s]+([0-9.]+)\s*[✅🟢]', message_text, re.IGNORECASE)
+    for target_num, target_price in target_matches:
+        data['targets'].append({
+            'level': f"Target {target_num}",
+            'price': target_price
+        })
     
-    # If specific format from example images
-    if not target_match and '✅' in message_text:
-        target_match = re.search(r'Target\s+(\d+):\s*([0-9.]+)\s*[✅]', message_text, re.IGNORECASE)
-    
-    if target_match:
-        data['level'] = f"Target {target_match.group(1)}"
-        data['price'] = target_match.group(2)
-    
-    # Find stop loss level and price
-    sl_match = None
-    if "stop loss" in message_text.lower():
-        sl_match = re.search(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)', message_text, re.IGNORECASE)
-    
-    # If specific format with red mark
-    if not sl_match and ('🛑' in message_text or '🔴' in message_text):
-        sl_match = re.search(r'Stop\s+loss\s+(\d+):\s*([0-9.]+)\s*[🛑🔴]', message_text, re.IGNORECASE)
-    
-    if sl_match:
-        data['level'] = f"Stop Loss {sl_match.group(1)}"
-        data['price'] = sl_match.group(2)
+    # Find all stop loss levels and prices
+    sl_matches = re.findall(r'Stop\s+loss\s+(\d+)[:\s]+([0-9.]+)\s*[🛑🔴]', message_text, re.IGNORECASE)
+    for sl_num, sl_price in sl_matches:
+        data['stop_losses'].append({
+            'level': f"Stop Loss {sl_num}",
+            'price': sl_price
+        })
     
     return data
 
@@ -444,21 +440,39 @@ async def run_client():
                     
                     # Send message
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
-                    
-                elif message_type == "TARGET_HIT":
-                    # Special format for target hit
+                
+                elif message_type == "MULTI_TARGET_HIT":
+                    # Process message with multiple target hits
                     hit_data = extract_hit_data(message.text)
                     
-                    if hit_data['coin'] and hit_data['level'] and hit_data['price']:
-                        # Use "SIGNAL UPDATE" format for target hit
+                    if hit_data['coin'] and hit_data['targets']:
+                        # Create update message with all targets hit
                         custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
-                        custom_text += f"🎯 {hit_data['level']} ({hit_data['price']}) HIT!\n\n"
+                        
+                        # Add all hit targets
+                        for target in hit_data['targets']:
+                            custom_text += f"🎯 {target['level']} ({target['price']}) HIT!\n"
+                        
+                        custom_text += "\n"
                     else:
                         # If extraction fails, send original message with standard header
                         custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
                         custom_text += message.text + "\n\n"
                     
-                    custom_text += ""
+                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                
+                elif message_type == "TARGET_HIT":
+                    # Special format for single target hit
+                    hit_data = extract_hit_data(message.text)
+                    
+                    if hit_data['coin'] and len(hit_data['targets']) > 0:
+                        # Use "SIGNAL UPDATE" format for target hit
+                        custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
+                        custom_text += f"🎯 {hit_data['targets'][0]['level']} ({hit_data['targets'][0]['price']}) HIT!\n\n"
+                    else:
+                        # If extraction fails, send original message with standard header
+                        custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
+                        custom_text += message.text + "\n\n"
                     
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
@@ -466,16 +480,14 @@ async def run_client():
                     # Special format for stop loss hit
                     hit_data = extract_hit_data(message.text)
                     
-                    if hit_data['coin'] and hit_data['level'] and hit_data['price']:
+                    if hit_data['coin'] and len(hit_data['stop_losses']) > 0:
                         # Use "SIGNAL UPDATE" format for stop loss hit
                         custom_text = f"🔴 SIGNAL UPDATE: {hit_data['coin']} 🔴\n\n"
-                        custom_text += f"⚠️ {hit_data['level']} ({hit_data['price']}) TRIGGERED!\n\n"
+                        custom_text += f"⚠️ {hit_data['stop_losses'][0]['level']} ({hit_data['stop_losses'][0]['price']}) TRIGGERED!\n\n"
                     else:
                         # If extraction fails, send original message with standard header
                         custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
                         custom_text += message.text + "\n\n"
-                    
-                    custom_text += ""
                     
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
                     
