@@ -589,6 +589,7 @@ async def run_client():
         write_log("Starting Telegram client...")
         await client.start(PHONE_NUMBER, code_callback=code_callback)
         
+        # Log client startup
         log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
         logger.info(log_msg)
         write_log(log_msg)
