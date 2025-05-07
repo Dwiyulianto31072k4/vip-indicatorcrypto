@@ -150,11 +150,28 @@ async def get_current_price(coin_symbol):
         logger.error(f"Error getting price: {str(e)}")
         return None
 
+# Function to extract risk information
+def extract_risk_info(message_text):
+    risk_info = ""
+    
+    # Look for volume ranking
+    volume_match = re.search(r'Volume\([^)]+\) Ranked: ([^R\n]+)', message_text)
+    if volume_match:
+        risk_info += f"Volume(24H) Ranked: {volume_match.group(1).strip()}\n"
+    
+    # Look for risk level
+    risk_match = re.search(r'Risk Level:\s*([^\n]+)', message_text)
+    if risk_match:
+        risk_info += f"Risk Level: {risk_match.group(1).strip()}"
+    
+    return risk_info
+
 # Function to create percentage change table
-def create_percentage_table(coin_name, entry_price, targets, stop_losses):
+def create_percentage_table(entry_price, targets, stop_losses):
     try:
         # Table header
-        table = "📝 Price Change Percentage Calculation\n\n"
+        table = "📝 Targets & Analysis\n"
+        table += "------------------------------------------------\n"
         table += "Level         Price       % Change from Entry\n"
         table += "------------------------------------------------\n"
         
@@ -170,6 +187,7 @@ def create_percentage_table(coin_name, entry_price, targets, stop_losses):
             sign = "+" if percentage >= 0 else ""
             table += f"Stop Loss {i}    {sl}      {sign}{percentage:.2f}%\n"
         
+        table += "------------------------------------------------"
         return table
     except Exception as e:
         logger.error(f"Error creating percentage table: {str(e)}")
@@ -417,7 +435,7 @@ async def run_client():
                         await client.send_file(
                             TARGET_CHANNEL_ID, 
                             message.media,
-                            caption=f"🚀 VIP SIGNAL 🚀\n\n"
+                            caption=f"🆕 NEW SIGNAL 🆕\n\n"
                         )
                     return
                 
@@ -509,20 +527,24 @@ async def run_client():
                     # Create custom message
                     if coin_name and entry_price and (targets or stop_losses):
                         # Header
-                        custom_text = f"🚀 VIP SIGNAL: {coin_name} 🚀\n\n"
+                        custom_text = f"🆕 NEW SIGNAL: {coin_name} 🆕\n\n"
                         
-                        # Add original message
-                        custom_text += message.text + "\n\n"
+                        # Extract and add risk information if available
+                        risk_info = extract_risk_info(message.text)
+                        if risk_info:
+                            custom_text += "📊 Risk Analysis 📊\n"
+                            custom_text += risk_info + "\n\n"
+                        
+                        # Add bold entry price
+                        custom_text += f"**Entry: {entry_price}**\n\n"
                         
                         # Add percentage table if data is sufficient
                         if targets or stop_losses:
-                            custom_text += create_percentage_table(coin_name, entry_price, targets, stop_losses)
+                            custom_text += create_percentage_table(entry_price, targets, stop_losses)
                         
-                        # Footer
-                        custom_text += "\n\n"
                     else:
                         # Default format if data is incomplete
-                        custom_text = f"🚀 VIP SIGNAL 🚀\n\n{message.text}\n\n "
+                        custom_text = f"🆕 NEW SIGNAL 🆕\n\n{message.text}\n\n"
                     
                     # Send message to target channel
                     await client.send_message(TARGET_CHANNEL_ID, custom_text)
@@ -664,7 +686,7 @@ with st.expander("How to Use"):
        - Logs are also saved in the `telegram_forwarder.log` file
     
     4. **Message Formats**:
-       - New trading signals: "VIP SIGNAL" with price percentage change calculation
+       - New trading signals: "NEW SIGNAL" with price percentage analysis
        - Target hit updates: "SIGNAL UPDATE" with simple format
        - Stop loss triggered updates: "SIGNAL UPDATE" with simple format
        - Daily recaps: Added win rate calculation and statistics
