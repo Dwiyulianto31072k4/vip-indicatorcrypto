@@ -455,14 +455,15 @@ async def run_client():
                 # If no text, just send media
                 if not message.text:
                     if message.media:
-                        # Kirim media ke Signal Call channel sebagai NEW SIGNAL
+                        # Kirim media ke Signal Call topic sebagai NEW SIGNAL
                         await client.send_file(
-                            SIGNAL_CALL_CHANNEL_ID, 
-                            message.media,
-                            caption=f"🆕 NEW SIGNAL 🆕\n\n"
+                            entity=GROUP_CHANNEL_ID,
+                            file=message.media,
+                            caption=f"🆕 NEW SIGNAL 🆕\n\n",
+                            reply_to=SIGNAL_CALL_TOPIC_ID
                         )
                         # Log
-                        log_msg = f"Media forwarded to Signal Call channel"
+                        log_msg = f"Media forwarded to Signal Call topic"
                         logger.info(log_msg)
                         write_log(log_msg)
                     return
@@ -484,7 +485,7 @@ async def run_client():
                     custom_text += create_win_rate_table(recap_data)
                     custom_text += "\n\n"
                     
-                    # Send message to Signal Call channel
+                    # Send message to Signal Call topic
                     await client.send_message(
                         entity=GROUP_CHANNEL_ID,
                         message=custom_text,
@@ -497,7 +498,7 @@ async def run_client():
                     write_log(log_msg)
                 
                 elif message_type in ["MULTI_TARGET_HIT", "TARGET_HIT", "STOP_LOSS_HIT"]:
-                    # All update messages go to the Signal Update channel
+                    # All update messages go to the Signal Update topic
                     
                     if message_type == "MULTI_TARGET_HIT":
                         # Process message with multiple target hits
@@ -543,12 +544,16 @@ async def run_client():
                             custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
                             custom_text += message.text + "\n\n"
                     
-                    # Send message to Signal Update channel
-                    await client.send_message(SIGNAL_UPDATE_CHANNEL_ID, custom_text)
+                    # Send message to Signal Update topic
+                    await client.send_message(
+                        entity=GROUP_CHANNEL_ID,
+                        message=custom_text,
+                        reply_to=SIGNAL_UPDATE_TOPIC_ID
+                    )
                     
                     # Log message info
                     message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media or message without text"
-                    log_msg = f"Signal update forwarded to Signal Update channel: {message_preview}"
+                    log_msg = f"Signal update forwarded to Signal Update topic: {message_preview}"
                     logger.info(log_msg)
                     write_log(log_msg)
                     
@@ -589,12 +594,16 @@ async def run_client():
                         # Default format if data is incomplete
                         custom_text = f"🆕 NEW SIGNAL 🆕\n\n{message.text}\n\n"
                     
-                    # Send message to Signal Call channel
-                    await client.send_message(SIGNAL_CALL_CHANNEL_ID, custom_text)
+                    # Send message to Signal Call topic
+                    await client.send_message(
+                        entity=GROUP_CHANNEL_ID,
+                        message=custom_text,
+                        reply_to=SIGNAL_CALL_TOPIC_ID
+                    )
                     
                     # Log message info
                     message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media or message without text"
-                    log_msg = f"New signal forwarded to Signal Call channel: {message_preview}"
+                    log_msg = f"New signal forwarded to Signal Call topic: {message_preview}"
                     logger.info(log_msg)
                     write_log(log_msg)
                     
@@ -689,18 +698,4 @@ with col2:
         if st.button("Stop Forwarding", use_container_width=True):
             # Stop client - no direct way to stop thread
             # Just mark as not running
-            st.session_state['running'] = False
-            write_log("Bot stopped!")
-            st.rerun()
-
-# Display activity log
-st.subheader("Activity Log")
-log_container = st.container()
-with log_container:
-    # Read logs from file
-    logs = read_logs()
-    # Display last 10 logs
-    if logs:
-        for log in reversed(logs[-10:]):
-            timestamp = log.get('time', '')
-            message = log.get('message', '')
+            st.session_state['running
