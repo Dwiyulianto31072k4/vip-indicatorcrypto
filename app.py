@@ -48,9 +48,10 @@ API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
 SOURCE_CHANNEL_ID = -1002051092635
 
-# Channel IDs untuk berbagai jenis pesan
-SIGNAL_CALL_CHANNEL_ID = "-1002670915863_39"  # Channel untuk NEW SIGNAL
-SIGNAL_UPDATE_CHANNEL_ID = "-1002670915863_38"  # Channel untuk Signal Update
+# Channel dan Topic IDs
+GROUP_CHANNEL_ID = -1002670915863  # ID grup utama
+SIGNAL_CALL_TOPIC_ID = 39  # Topic ID untuk NEW SIGNAL
+SIGNAL_UPDATE_TOPIC_ID = 38  # Topic ID untuk Signal Update
 
 # Files to store verification code
 VERIFICATION_CODE_FILE = "verification_code.txt"
@@ -484,10 +485,14 @@ async def run_client():
                     custom_text += "\n\n"
                     
                     # Send message to Signal Call channel
-                    await client.send_message(SIGNAL_CALL_CHANNEL_ID, custom_text)
+                    await client.send_message(
+                        entity=GROUP_CHANNEL_ID,
+                        message=custom_text,
+                        reply_to=SIGNAL_CALL_TOPIC_ID
+                    )
                     
                     # Log message info
-                    log_msg = f"Daily recap forwarded to Signal Call channel"
+                    log_msg = f"Daily recap forwarded to Signal Call topic"
                     logger.info(log_msg)
                     write_log(log_msg)
                 
