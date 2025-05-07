@@ -4,7 +4,7 @@ import threading
 import time
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import logging
 from telethon import TelegramClient, events
 import aiohttp
@@ -15,9 +15,6 @@ st.set_page_config(
     page_icon="📱",
     layout="wide"
 )
-
-# Logging configuration with WIB timezone
-from datetime import datetime, timezone, timedelta
 
 # Define WIB timezone (GMT+7)
 wib_tz = timezone(timedelta(hours=7))
@@ -457,11 +454,16 @@ async def run_client():
                 # If no text, just send media
                 if not message.text:
                     if message.media:
+                        # Kirim media ke Signal Call channel sebagai NEW SIGNAL
                         await client.send_file(
-                            TARGET_CHANNEL_ID, 
+                            SIGNAL_CALL_CHANNEL_ID, 
                             message.media,
                             caption=f"🆕 NEW SIGNAL 🆕\n\n"
                         )
+                        # Log
+                        log_msg = f"Media forwarded to Signal Call channel"
+                        logger.info(log_msg)
+                        write_log(log_msg)
                     return
                 
                 # Log incoming message for debugging
@@ -481,58 +483,69 @@ async def run_client():
                     custom_text += create_win_rate_table(recap_data)
                     custom_text += "\n\n"
                     
-                    # Send message
-                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                    # Send message to Signal Call channel
+                    await client.send_message(SIGNAL_CALL_CHANNEL_ID, custom_text)
+                    
+                    # Log message info
+                    log_msg = f"Daily recap forwarded to Signal Call channel"
+                    logger.info(log_msg)
+                    write_log(log_msg)
                 
-                elif message_type == "MULTI_TARGET_HIT":
-                    # Process message with multiple target hits
-                    hit_data = extract_hit_data(message.text)
+                elif message_type in ["MULTI_TARGET_HIT", "TARGET_HIT", "STOP_LOSS_HIT"]:
+                    # All update messages go to the Signal Update channel
                     
-                    if hit_data['coin'] and hit_data['targets']:
-                        # Create update message with all targets hit
-                        custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
+                    if message_type == "MULTI_TARGET_HIT":
+                        # Process message with multiple target hits
+                        hit_data = extract_hit_data(message.text)
                         
-                        # Add all hit targets
-                        for target in hit_data['targets']:
-                            custom_text += f"🎯 {target['level']} ({target['price']}) HIT!\n"
+                        if hit_data['coin'] and hit_data['targets']:
+                            # Create update message with all targets hit
+                            custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
+                            
+                            # Add all hit targets
+                            for target in hit_data['targets']:
+                                custom_text += f"🎯 {target['level']} ({target['price']}) HIT!\n"
+                            
+                            custom_text += "\n"
+                        else:
+                            # If extraction fails, send original message with standard header
+                            custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
+                            custom_text += message.text + "\n\n"
+                    
+                    elif message_type == "TARGET_HIT":
+                        # Special format for single target hit
+                        hit_data = extract_hit_data(message.text)
                         
-                        custom_text += "\n"
-                    else:
-                        # If extraction fails, send original message with standard header
-                        custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
-                        custom_text += message.text + "\n\n"
+                        if hit_data['coin'] and len(hit_data['targets']) > 0:
+                            # Use "SIGNAL UPDATE" format for target hit
+                            custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
+                            custom_text += f"🎯 {hit_data['targets'][0]['level']} ({hit_data['targets'][0]['price']}) HIT!\n\n"
+                        else:
+                            # If extraction fails, send original message with standard header
+                            custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
+                            custom_text += message.text + "\n\n"
                     
-                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
-                
-                elif message_type == "TARGET_HIT":
-                    # Special format for single target hit
-                    hit_data = extract_hit_data(message.text)
+                    elif message_type == "STOP_LOSS_HIT":
+                        # Special format for stop loss hit
+                        hit_data = extract_hit_data(message.text)
+                        
+                        if hit_data['coin'] and len(hit_data['stop_losses']) > 0:
+                            # Use "SIGNAL UPDATE" format for stop loss hit
+                            custom_text = f"🔴 SIGNAL UPDATE: {hit_data['coin']} 🔴\n\n"
+                            custom_text += f"⚠️ {hit_data['stop_losses'][0]['level']} ({hit_data['stop_losses'][0]['price']}) TRIGGERED!\n\n"
+                        else:
+                            # If extraction fails, send original message with standard header
+                            custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
+                            custom_text += message.text + "\n\n"
                     
-                    if hit_data['coin'] and len(hit_data['targets']) > 0:
-                        # Use "SIGNAL UPDATE" format for target hit
-                        custom_text = f"✅ SIGNAL UPDATE: {hit_data['coin']} ✅\n\n"
-                        custom_text += f"🎯 {hit_data['targets'][0]['level']} ({hit_data['targets'][0]['price']}) HIT!\n\n"
-                    else:
-                        # If extraction fails, send original message with standard header
-                        custom_text = f"✅ SIGNAL UPDATE ✅\n\n"
-                        custom_text += message.text + "\n\n"
+                    # Send message to Signal Update channel
+                    await client.send_message(SIGNAL_UPDATE_CHANNEL_ID, custom_text)
                     
-                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
-                    
-                elif message_type == "STOP_LOSS_HIT":
-                    # Special format for stop loss hit
-                    hit_data = extract_hit_data(message.text)
-                    
-                    if hit_data['coin'] and len(hit_data['stop_losses']) > 0:
-                        # Use "SIGNAL UPDATE" format for stop loss hit
-                        custom_text = f"🔴 SIGNAL UPDATE: {hit_data['coin']} 🔴\n\n"
-                        custom_text += f"⚠️ {hit_data['stop_losses'][0]['level']} ({hit_data['stop_losses'][0]['price']}) TRIGGERED!\n\n"
-                    else:
-                        # If extraction fails, send original message with standard header
-                        custom_text = f"🔴 SIGNAL UPDATE 🔴\n\n"
-                        custom_text += message.text + "\n\n"
-                    
-                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
+                    # Log message info
+                    message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media or message without text"
+                    log_msg = f"Signal update forwarded to Signal Update channel: {message_preview}"
+                    logger.info(log_msg)
+                    write_log(log_msg)
                     
                 else:  # NEW_SIGNAL
                     # Extract trading data
@@ -571,14 +584,14 @@ async def run_client():
                         # Default format if data is incomplete
                         custom_text = f"🆕 NEW SIGNAL 🆕\n\n{message.text}\n\n"
                     
-                    # Send message to target channel
-                    await client.send_message(TARGET_CHANNEL_ID, custom_text)
-                
-                # Log message info
-                message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media or message without text"
-                log_msg = f"Message successfully forwarded: {message_preview}"
-                logger.info(log_msg)
-                write_log(log_msg)
+                    # Send message to Signal Call channel
+                    await client.send_message(SIGNAL_CALL_CHANNEL_ID, custom_text)
+                    
+                    # Log message info
+                    message_preview = message.text[:50] + "..." if message.text and len(message.text) > 50 else "Media or message without text"
+                    log_msg = f"New signal forwarded to Signal Call channel: {message_preview}"
+                    logger.info(log_msg)
+                    write_log(log_msg)
                     
             except Exception as e:
                 error_msg = f"Error sending message: {str(e)}"
@@ -644,7 +657,7 @@ with col2:
     # Update total forwarded from log
     forwarded_count = 0
     for log in read_logs():
-        if "Message successfully forwarded" in log['message']:
+        if "forwarded" in log['message']:
             forwarded_count += 1
     st.session_state['total_forwarded'] = forwarded_count
     st.markdown(f"**Total Messages Sent:** {st.session_state['total_forwarded']}")
@@ -686,42 +699,3 @@ with log_container:
         for log in reversed(logs[-10:]):
             timestamp = log.get('time', '')
             message = log.get('message', '')
-            is_error = log.get('error', False)
-            
-            if is_error:
-                st.error(f"{timestamp} - {message}")
-            else:
-                st.info(f"{timestamp} - {message}")
-
-# Add usage instructions
-with st.expander("How to Use"):
-    st.markdown("""
-    ### How to Use This Application:
-    
-    1. **Running the Bot**:
-       - Click "Start Forwarding" to begin
-       - First time, you may be asked to enter a verification code
-       - Click "Stop Forwarding" to stop the bot
-    
-    2. **Verification Code**:
-       - When first run, Telegram will send a verification code to your phone number
-       - Enter that code in the "Verification Code" field that appears
-    
-    3. **View Logs**:
-       - Check the "Activity Log" section to monitor message forwarding process
-       - Logs are also saved in the `telegram_forwarder.log` file
-    
-    4. **Message Formats**:
-       - New trading signals: "NEW SIGNAL" with price percentage analysis
-       - Target hit updates: "SIGNAL UPDATE" with simple format
-       - Stop loss triggered updates: "SIGNAL UPDATE" with simple format
-       - Daily recaps: Added win rate calculation and statistics
-    
-    5. **Troubleshooting**:
-       - If error occurs, restart the application
-       - Make sure your account has access to both channels
-    """)
-
-# Auto-refresh page every 5 seconds
-time.sleep(5)
-st.rerun()
