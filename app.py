@@ -666,36 +666,4 @@ st.subheader("Status & Statistics")
 col1, col2 = st.columns(2)
 with col1:
     status = "🟢 **Running**" if st.session_state['running'] else "🔴 **Stopped**"
-    st.markdown(f"**Bot Status:** {status}")
-with col2:
-    # Update total forwarded from log
-    forwarded_count = 0
-    for log in read_logs():
-        if "forwarded" in log['message']:
-            forwarded_count += 1
-    st.session_state['total_forwarded'] = forwarded_count
-    st.markdown(f"**Total Messages Sent:** {st.session_state['total_forwarded']}")
-
-# Start/stop buttons
-col1, col2 = st.columns(2)
-with col1:
-    if not st.session_state['running']:
-        if st.button("Start Forwarding", use_container_width=True):
-            # Create log file if it doesn't exist
-            if not os.path.exists(LOG_FILE):
-                with open(LOG_FILE, "w") as f:
-                    f.write("")
-            
-            # Run client in separate thread
-            thread = threading.Thread(target=start_client_thread, daemon=True)
-            thread.start()
-            
-            st.session_state['running'] = True
-            write_log("Bot starting...")
-            st.rerun()
-with col2:
-    if st.session_state['running']:
-        if st.button("Stop Forwarding", use_container_width=True):
-            # Stop client - no direct way to stop thread
-            # Just mark as not running
-            st.session_state['running
+    st.markdown(f"**Bot Status
