@@ -50,7 +50,10 @@ API_ID = 28690093
 API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
 SOURCE_CHANNEL_ID = -1002051092635
-TARGET_CHANNEL_ID = -1002670915863
+
+# Channel IDs untuk berbagai jenis pesan
+SIGNAL_CALL_CHANNEL_ID = "-1002670915863_39"  # Channel untuk NEW SIGNAL
+SIGNAL_UPDATE_CHANNEL_ID = "-1002670915863_38"  # Channel untuk Signal Update
 
 # Files to store verification code
 VERIFICATION_CODE_FILE = "verification_code.txt"
