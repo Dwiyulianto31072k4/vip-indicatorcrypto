@@ -16,14 +16,32 @@ st.set_page_config(
     layout="wide"
 )
 
-# Logging configuration
+# Logging configuration with WIB timezone
+from datetime import datetime, timezone, timedelta
+
+# Define WIB timezone (GMT+7)
+wib_tz = timezone(timedelta(hours=7))
+
+# Custom formatter with WIB timezone
+class WIBFormatter(logging.Formatter):
+    def formatTime(self, record, datefmt=None):
+        dt = datetime.fromtimestamp(record.created, wib_tz)
+        if datefmt:
+            s = dt.strftime(datefmt)
+        else:
+            s = dt.strftime("%Y-%m-%d %H:%M:%S WIB")
+        return s
+
+# Configure logging with WIB formatter
+wib_formatter = WIBFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler = logging.FileHandler("telegram_forwarder.log")
+file_handler.setFormatter(wib_formatter)
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(wib_formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("telegram_forwarder.log"),
-        logging.StreamHandler()
-    ]
+    handlers=[file_handler, stream_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -50,8 +68,9 @@ if 'log_messages' not in st.session_state:
 def write_log(message, is_error=False):
     try:
         with open(LOG_FILE, "a") as f:
+            # Set WIB timezone (GMT+7)
             timestamp = datetime.now().strftime("%H:%M:%S")
-            f.write(f"{timestamp} - {'ERROR' if is_error else 'INFO'} - {message}\n")
+            f.write(f"{timestamp} WIB - {'ERROR' if is_error else 'INFO'} - {message}\n")
     except Exception as e:
         logger.error(f"Failed to write log to file: {str(e)}")
 
@@ -63,8 +82,11 @@ def read_logs():
             with open(LOG_FILE, "r") as f:
                 for line in f.readlines():
                     parts = line.strip().split(" - ", 2)
-                    if len(parts) == 3:
-                        timestamp, level, message = parts
+                    if len(parts) >= 3:
+                        # Support the WIB timestamp format
+                        timestamp = parts[0]
+                        level = parts[1]
+                        message = parts[2]
                         logs.append({
                             'time': timestamp,
                             'message': message,
