@@ -589,6 +589,10 @@ async def run_client():
                         # Add percentage table if data is sufficient
                         if targets or stop_losses:
                             custom_text += create_percentage_table(entry_price, targets, stop_losses)
+                            
+                            if coin_name:
+                                pure_coin_name = re.sub(r'(USDT|BTC|ETH|BNB|USD|BUSD)$', '', coin_name)
+                                custom_text += f"\n\n🔍 Cek Sentimen Sosial Media: https://x.com/search?q=%24{pure_coin_name}&src=typed_query"
                         
                     else:
                         # Default format if data is incomplete
