@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone, timedelta
 import logging
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 import aiohttp
 
 # Streamlit page configuration
@@ -43,10 +44,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Credentials and fixed configuration
+# Credentials and fixed configuration
 API_ID = 28690093
 API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
+SESSION_STRING = "1BVtsOKcBux7ul7lG8zUzg9peQdgaWScIFlLmcac7gTBY1RTIxtowM0LjbB-rZv7B51Ib2H_ZP3d2P1WezdBz6SP9AihSvVAP9lYmQplQq19K-tsgvrK8stkOSm-NxWODUcGP2UEhFCu0MAC0JY2d14OSnA2QvViJSx2Z8gLnrtYb1Ox15yRTjkDZdydN4myIknSCNP-ItLqyWYOw84hCj8xrjRyGu20WKyzyFtlHQoLqbdwMXMmsaBx35qtdJvM-rEBktnNHuLnUwKa46mrZuZLFLeY_nmf1_blwrdHDcTKi3VjnP-WH_dZdw5Slo90y1WJ_WX-NfH51KcL4wF8cSPuM-YhMxlM="
 SOURCE_CHANNEL_ID = -1002051092635
+SOURCE_CHANNEL_ID_2 = -1001685592361
+
+NEWS_TOPIC_ID = 2194  # Topic ID untuk Berita Crypto
 
 # Channel dan Topic IDs
 GROUP_CHANNEL_ID = -1002670915863  # ID grup utama
@@ -193,15 +199,15 @@ def extract_risk_info(message_text):
 def create_percentage_table(entry_price, targets, stop_losses):
     try:
         # Table header
-        table = "📝 Targets & Analysis\n"
-        table += "------------------------------------------------\n"
+        table = "📝 Targets & Stop Loss\n"
+        table += "----------------------------------------------\n"
         table += "Level         Price       % Change from Entry\n"
-        table += "------------------------------------------------\n"
+        table += "----------------------------------------------\n"
         
         # Add targets
         for i, target in enumerate(targets, 1):
             percentage = calculate_percentage_change(entry_price, target)
-            table += f"Target {i}      {target}      +{percentage:.2f}%\n"
+            table += f"Target {i}         {target}      +{percentage:.2f}%\n"
         
         # Add stop losses
         for i, sl in enumerate(stop_losses, 1):
@@ -210,7 +216,7 @@ def create_percentage_table(entry_price, targets, stop_losses):
             sign = "+" if percentage >= 0 else ""
             table += f"Stop Loss {i}    {sl}      {sign}{percentage:.2f}%\n"
         
-        table += "------------------------------------------------"
+        table += "----------------------------------------------"
         return table
     except Exception as e:
         logger.error(f"Error creating percentage table: {str(e)}")
@@ -444,7 +450,7 @@ def create_win_rate_table(recap_data):
 async def run_client():
     try:
         # Create client
-        client = TelegramClient('telegram_forwarder_session', API_ID, API_HASH)
+        client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
         
         # Event handler for new messages
         @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID))
@@ -592,7 +598,8 @@ async def run_client():
                             
                             if coin_name:
                                 pure_coin_name = re.sub(r'(USDT|BTC|ETH|BNB|USD|BUSD)$', '', coin_name)
-                                custom_text += f"\n\n🔍 Cek Sentimen Sosial Media: https://x.com/search?q=%24{pure_coin_name}&src=typed_query"
+                                custom_text += f"\n\n[🔍 Cek Sentimen Sosial Media untuk ${pure_coin_name}](https://x.com/search?q=%24{pure_coin_name}&src=typed_query)"
+                                custom_text += f"\n[📊 Analisis Data Coinglass untuk {pure_coin_name}](https://www.coinglass.com/currencies/{pure_coin_name})"
                         
                     else:
                         # Default format if data is incomplete
@@ -616,9 +623,63 @@ async def run_client():
                 logger.error(error_msg)
                 write_log(error_msg, True)
         
+        @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID_2))
+        async def crypto_news_handler(event):
+            try:
+                message = event.message
+                
+                logger.info(f"Menerima berita crypto dari SOURCE_CHANNEL_ID_2: {message.text[:100] if message.text else 'Konten media'}...")
+                
+                is_new_announcement = False
+                if message.text and message.text.strip().upper().startswith("NEW"):
+                    is_new_announcement = True
+                    
+                
+                if message.text:
+                    if is_new_announcement:
+                        custom_text = message.text + "\n\n**Source: Crypto News**"
+                    
+                    else:
+                        custom_text = f"📊 CRYPTO MARKET UPDATE 📊\n\n{message.text}\n\n**Source: Crypto News**"
+                        
+                        coin_match = re.search(r'#([A-Z]{3,})', message.text)
+                        if coin_match:
+                            coin = coin_match.group(1)
+                            custom_text = f"📊 {coin} MARKET UPDATE 📊\n\n{message.text}\n\n**Source: Crypto News**"
+                    
+                else:
+                    custom_text = "📰 CRYPTO NEWS UPDATE 📰\n\n**Source: Crypto News**"
+                    
+                if message.media:
+                    await client.send_file(
+                        entity=GROUP_CHANNEL_ID,
+                        file=message.media,
+                        caption=custom_text,
+                        reply_to=NEWS_TOPIC_ID
+                    )
+                
+                else:
+                    await client.send_message(
+                        entity=GROUP_CHANNEL_ID,
+                        message=custom_text,
+                        reply_to=NEWS_TOPIC_ID
+                    )
+                    
+                log_msg = f"Berita crypto diteruskan ke topik Berita"
+                logger.info(log_msg)
+                write_log(log_msg)
+                
+                
+                st.session_state['total_forwarded'] += 1
+                
+            except Exception as e:
+                error_msg = f"Error meneruskan berita crypto: {str(e)}"
+                logger.error(error_msg)
+                write_log(error_msg, True)
+                  
         # Run client
         write_log("Starting Telegram client...")
-        await client.start(PHONE_NUMBER, code_callback=code_callback)
+        await client.start()
         
         # Log client startup
         log_msg = f"Bot successfully activated. Monitoring channel: {SOURCE_CHANNEL_ID}"
