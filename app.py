@@ -48,16 +48,16 @@ logger = logging.getLogger(__name__)
 API_ID = 28690093
 API_HASH = "aa512841e37c5ccb5a8ac494395bb373"
 PHONE_NUMBER = "+6285161054271"
-SESSION_STRING = "1BVtsOKcBu2XVcG7mU_BZAGNlSmzJbbMye44OR5HEu1WT5VrHgmZfHzmWnttGk4MtE35m20lmHhp4gd7FpAedsMHF3YpLlNqkpzJBXxBtXoSogzv0fn0lrA9ChN074uYY0l9DyV6KKY9rDtwnzWH6AQ-dSnPQXEKIdbrAPWogiL-NirKJ2AhX-fxnx2fRTnGz3OaMq1XDSjofpxdHID73Rhmn3lNYL3FtVmz5_wcKNTSPjTwIiHFM4unC4VlYkzjCiJgclGzOMB3hEBzbeEnGjdI3N3geqGBGDYKK9Vbv4CjeU8IUhgW_Cclu2VYuf6vc3xp8LMhHVRhVZav80ZVnRmraUE3nIRo="
-SOURCE_CHANNEL_ID = -1002051092635  # Channel untuk sinyal trading
+SESSION_STRING = "1BVtsOKcBu8b51m3-2yCVQ8muL-MG112eHq1391qt396CS47SfW9mP4XSiPMA51QFKfNHjEbZw3IOE_AjGZjyJAxsAwehs8HrnVonUxZ8-YWaE2WQZfdECVJYGqv78TlWnEdc-gQ-e-1rOLGYdScStxCerqJcanCAMgLkEhXGSKr6rgOrk2QVvQAZiE6pUhBnBNFswBgxx1Pjqz1ZZsQuDZeQTxTypS4EJ-nTnyfsYlylaSZqKzR3susLpGPB-DWd_2RVu9GRltZhZr-gYZh185lcr-wsrDN_sbTFdIjHIYlJmoJp-w3qZDW5EIQYZD1zn4gEMaiQTMRw7kCBFRUQWDbsl18oFNw="
+# Source Channels untuk sinyal trading
+SOURCE_CHANNEL_ID = -1002051092635      # Channel untuk sinyal trading
 
-# Channel untuk berita crypto (dengan label yang lebih deskriptif)
-NEWS_SOURCE_CHANNELS = {
-    -1001685592361: "Crypto News",
-    -1002183174454: "TU Crypto News",
-    -1001350475252: "Crypto Inssider"
-}
+# Source Channels untuk berita crypto
+SOURCE_CHANNEL_ID_2 = -1001685592361    # Crypto News
+SOURCE_CHANNEL_ID_3 = -1002183174454    # TU Crypto News 
+SOURCE_CHANNEL_ID_4 = -1001350475252    # Crypto Inssider
 
+# Topic IDs
 NEWS_TOPIC_ID = 2194  # Topic ID untuk Berita Crypto
 
 # Channel dan Topic IDs
@@ -629,40 +629,33 @@ async def run_client():
                 logger.error(error_msg)
                 write_log(error_msg, True)
         
-        @client.on(events.NewMessage(chats=list(NEWS_SOURCE_CHANNELS.keys()), forwards=True))
-        async def crypto_news_handler(event):
+        @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID_2))
+        async def crypto_news_handler2(event):
             try:
                 message = event.message
                 
-                source_channel = event.chat_id
+                logger.info(f"Menerima berita crypto dari SOURCE_CHANNEL_ID_2: {message.text[:100] if message.text else 'Konten media'}...")
                 
-                if source_channel == -1001685592361:
-                    source_label = "Crypto News"
-                elif source_channel == -1002183174454:
-                    source_label = "TU Crypto News"
-                elif source_channel == -1001350475252:
-                    source_label = "Crypto Insider"
-                
-                logger.info(f"Menerima berita dari {source_label} (ID: {source_channel}): {message.text[:100] if message.text else 'Konten media'}...")
-                
+                is_new_announcement = False
+                if message.text and message.text.strip().upper().startswith("NEW"):
+                    is_new_announcement = True
+                    
                 
                 if message.text:
+                    if is_new_announcement:
+                        custom_text = message.text + "\n\n**Source: Crypto News**"
                     
-                    if message.text.strip().upper().startswith(("NEW", "ALERT", "BREAKING")):
-                        custom_text = f"{message.text}\n\n**Source: {source_label}**"
                     else:
+                        custom_text = f"📊 CRYPTO MARKET UPDATE 📊\n\n{message.text}\n\n**Source: Crypto News**"
+                        
                         coin_match = re.search(r'#([A-Z]{3,})', message.text)
                         if coin_match:
                             coin = coin_match.group(1)
-                            custom_text = f"📊 {coin} MARKET UPDATE 📊\n\n{message.text}\n\n**Source: {source_label}**"
-                        
-                        else:
-                            custom_text = f"📊 CRYPTO MARKET UPDATE 📊\n\n{message.text}\n\n**Source: {source_label}**"
-                
-                else:
-                    custom_text = f"📰 CRYPTO NEWS UPDATE 📰\n\n**Source: {source_label}**"
+                            custom_text = f"📊 {coin} MARKET UPDATE 📊\n\n{message.text}\n\n**Source: Crypto News**"
                     
-                
+                else:
+                    custom_text = "📰 CRYPTO NEWS UPDATE 📰\n\n**Source: Crypto News**"
+                    
                 if message.media:
                     await client.send_file(
                         entity=GROUP_CHANNEL_ID,
@@ -670,7 +663,7 @@ async def run_client():
                         caption=custom_text,
                         reply_to=NEWS_TOPIC_ID
                     )
-                    
+                
                 else:
                     await client.send_message(
                         entity=GROUP_CHANNEL_ID,
@@ -678,18 +671,113 @@ async def run_client():
                         reply_to=NEWS_TOPIC_ID
                     )
                     
-                
-                log_msg = f"Berita dari {source_label} diteruskan ke topik Berita"
+                log_msg = f"Berita crypto diteruskan ke topik Berita"
                 logger.info(log_msg)
                 write_log(log_msg)
+                
                 
                 st.session_state['total_forwarded'] += 1
                 
             except Exception as e:
-                error_msg = f"Error forwarding news: {str(e)}"
+                error_msg = f"Error meneruskan berita crypto: {str(e)}"
                 logger.error(error_msg)
                 write_log(error_msg, True)
-    
+                
+                
+        @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID_3))
+        async def crypto_news_handler3(event):
+            try:
+                message = event.message
+                logger.info(f"Menerima berita crypto dari TU Crypto News: {message.text[:100] if message.text else 'Konten media'}...")
+                
+                is_new_announcement = False
+                if message.text and message.text.strip().upper().startswith("NEW"):
+                    is_new_announcement = True
+                    
+                if message.text:
+                    if is_new_announcement:
+                        custom_text = message.text + "\n\n**Source: TU Crypto News**"
+                    
+                    else:
+                        custom_text = f"📊 CRYPTO MARKET UPDATE 📊\n\n{message.text}\n\n**Source: TU Crypto News**"
+                        
+                        coin_match = re.search(r'#([A-Z]{3,})', message.text)
+                        if coin_match:
+                            coin = coin_match.group(1)
+                            custom_text = f"📊 {coin} MARKET UPDATE 📊\n\n{message.text}\n\n**Source: TU Crypto News**"
+                            
+                else:
+                    custom_text = "📰 CRYPTO NEWS UPDATE 📰\n\n**Source: TU Crypto News**"
+                    
+                if message.media:
+                    await client.send_file(
+                        entity=GROUP_CHANNEL_ID,
+                        file=message.media,
+                        caption=custom_text,
+                        reply_to=NEWS_TOPIC_ID
+                    )
+                else:
+                    await client.send_message(
+                        entity=GROUP_CHANNEL_ID,
+                        message=custom_text,
+                        reply_to=NEWS_TOPIC_ID
+                    )
+                log_msg = f"Berita crypto diteruskan ke topik Berita"
+                logger.info(log_msg)
+                write_log(log_msg)
+                st.session_state['total_forwarded'] += 1
+            except Exception as e:
+                error_msg = f"Error meneruskan berita crypto: {str(e)}"
+                logger.error(error_msg)
+                write_log(error_msg, True)    
+        
+        @client.on(events.NewMessage(chats=SOURCE_CHANNEL_ID_4))
+        async def crypto_news_handler4(event):
+            try:
+                message = event.message
+                logger.info(f"Menerima berita crypto dari Crypto Insider: {message.text[:100] if message.text else 'Konten media'}...")
+                
+                is_new_announcement = False
+                if message.text and message.text.strip().upper().startswith("NEW"):
+                    is_new_announcement = True
+                    
+                if message.text:
+                    if is_new_announcement:
+                        custom_text = message.text + "\n\n**Source: Crypto Insider**"
+                    
+                    else:
+                        custom_text = f"📊 CRYPTO MARKET UPDATE 📊\n\n{message.text}\n\n**Source: Crypto Insider**"
+                        
+                        coin_match = re.search(r'#([A-Z]{3,})', message.text)
+                        if coin_match:
+                            coin = coin_match.group(1)
+                            custom_text = f"📊 {coin} MARKET UPDATE 📊\n\n{message.text}\n\n**Source: Crypto Insider**"
+                            
+                else:
+                    custom_text = "📰 CRYPTO NEWS UPDATE 📰\n\n**Source: Crypto Insider**"
+                    
+                if message.media:
+                    await client.send_file(
+                        entity=GROUP_CHANNEL_ID,
+                        file=message.media,
+                        caption=custom_text,
+                        reply_to=NEWS_TOPIC_ID
+                    )
+                else:
+                    await client.send_message(
+                        entity=GROUP_CHANNEL_ID,
+                        message=custom_text,
+                        reply_to=NEWS_TOPIC_ID
+                    )
+                log_msg = f"Berita crypto diteruskan ke topik Berita"
+                logger.info(log_msg)
+                write_log(log_msg)
+                st.session_state['total_forwarded'] += 1
+            except Exception as e:
+                error_msg = f"Error meneruskan berita crypto: {str(e)}"
+                logger.error(error_msg)
+                write_log(error_msg, True)
+            
       
         # Run client
         write_log("Starting Telegram client...")
